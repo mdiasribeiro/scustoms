@@ -19,7 +19,7 @@ object TestBot {
 
   final case class User(id: Long, name: String, frases: Vector[String])
 
-  val token = "OTE2MDQ0OTY2NDI4NTUzMjc4.YakbWw.mG3-BRCAyxPC4-e7FHJrr7wOsV8"
+  val token = ""
   val clientSettings: ClientSettings = ClientSettings(token)
   val botChannel = "scustoms"
   val random = new Random
