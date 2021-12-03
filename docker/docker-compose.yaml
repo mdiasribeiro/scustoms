@@ -1,0 +1,15 @@
+version: '3.7'
+
+services:
+  scustoms:
+    image: scustoms:0.03
+    restart: "no"
+    volumes:
+      - "./database:/database"
+    environment:
+      - DISCORD_SCUSTOMS_TOKEN=$DISCORD_SCUSTOMS_TOKEN
+    networks:
+      backend:
+
+networks:
+  backend:        

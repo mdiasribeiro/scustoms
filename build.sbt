@@ -1,6 +1,6 @@
-name := "scustoms"
 
-version := "0.1"
+name := "scustoms"
+version := "0.03"
 
 scalaVersion := "2.13.7"
 val AkkaVersion = "2.6.17"
@@ -18,11 +18,24 @@ libraryDependencies ++= Seq(
   "de.gesundkrank.jskills"      %  "jskills"                  % "1.1"
 )
 
-//libraryDependencies += "net.katsstuff" %% "ackcord"                 % "0.17.1" //For high level API, includes all the other modules
-//libraryDependencies += "net.katsstuff" %% "ackcord-core"            % "0.17.1" //Low level core API
-//libraryDependencies += "net.katsstuff" %% "ackcord-commands"        % "0.17.1" //Low to mid level Commands API
-//libraryDependencies += "net.katsstuff" %% "ackcord-lavaplayer-core" % "0.17.1" //Low level lavaplayer API
+Compile / mainClass := Some("com.scustoms.Main")
 
-// https://mvnrepository.com/artifact/de.gesundkrank.jskills/jskills
-//libraryDependencies += "de.gesundkrank.jskills" % "jskills" % "1.1"
-//libraryDependencies += "com.github.david-bouyssie" % "sqlite4s" % "0.4.0"
+enablePlugins(JavaAppPackaging)
+enablePlugins(DockerPlugin)
+
+import com.typesafe.sbt.packager.docker._
+import NativePackagerHelper._
+import scala.sys.process._
+
+lazy val timestamp = "date --utc +%Y-%m-%dT%TZ".!!.trim
+
+Universal / mappings ++= contentOf("src/main/resources")
+//Universal / mappings := mappings.value
+//Universal / mappings ++= contentOf(resourceDirectory.value)
+Docker / maintainer := "mdiasribeiro"
+Docker / version := version.value
+//Docker / defaultLinuxInstallLocation := "/opt/docker"
+//Docker / daemonUser := "daemon"
+//Docker / daemonUserUid := None
+
+dockerBaseImage := "openjdk:11-slim"
