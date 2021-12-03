@@ -1,13 +1,14 @@
 package com.scustoms
 
-import ackcord._
-import ackcord.data._
-import akka.actor.typed.ActorSystem
-
-import scala.concurrent.Await
-import scala.concurrent.duration.Duration
+import com.typesafe.config.ConfigFactory
 
 object Main extends App {
-  // Start actor system and supervisor
-  val system = ActorSystem(SupervisorBot(), "scustoms-system")
+  val config = ConfigFactory.load()
+  val discordToken = config.getString("scustoms.discordToken")
+  if (discordToken.isBlank) {
+    println("Discord token has not been set!")
+    System.exit(-1)
+  } else {
+    new ScustomsBot(discordToken)
+  }
 }
