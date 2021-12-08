@@ -3,11 +3,10 @@ package com.scustoms.database
 import akka.actor.typed.Behavior
 import akka.actor.typed.scaladsl.Behaviors
 import com.scustoms.database.keepers.PlayerKeeper
-import slick.jdbc
-import scala.concurrent.{Await, ExecutionContext, Future}
-import slick.jdbc.SQLiteProfile.api._
+import slick.{dbio, jdbc}
 
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.{ExecutionContext, Future}
+import slick.jdbc.SQLiteProfile.api._
 
 object DatabaseService {
   sealed trait DatabaseCommand
@@ -18,23 +17,28 @@ object DatabaseService {
 
   val playerKeeper: PlayerKeeper = new PlayerKeeper
 
-  def testDatabase(): Unit = {
+  def clearDatabase(): Future[Unit] = {
+    runTransaction {
+      DBIO.seq(
+        PlayerKeeper.playersTable.schema.dropIfExists
+      )
+    }
+  }
 
-    val db = Database.forConfig("scustoms.sqlite")
+  def setupDatabase(): Future[Unit] = {
+    runTransaction {
+      DBIO.seq(
+        PlayerKeeper.playersTable.schema.createIfNotExists
+      )
+    }
+  }
+
+  // https://scala-slick.org/doc/3.2.0/dbio.html#executing-database-i-o-actions
+  def runTransaction[R, S <: dbio.NoStream, E <: dbio.Effect](operations: => DBIOAction[R, S, E]): Future[R] = {
     try {
-      val setup = DBIO.seq(
-        (PlayerKeeper.playersTable.schema).createIfNotExists
-      )
-      val setupFuture: Future[Unit] = db.run(setup)
-      Await.result(setupFuture, 10.seconds)
-      println("Done")
-      val q1 = for(p <- PlayerKeeper.playersTable) yield p.username
-      db.stream(q1.result).foreach(println)
-      val insert = DBIO.seq(
-        PlayerKeeper.playersTable += (0, 168517789483532288L, "MauZaum")
-      )
-      val insertFuture = db.run(insert)
-      insertFuture.onComplete( _ => db.stream(q1.result).foreach(println))
+      val db = Database.forConfig("scustoms.sqlite")
+      val ops = operations
+      db.run(ops.transactionally)
     } finally db.close
   }
 

@@ -15,8 +15,9 @@ class ScustomsBot(discordToken: String) {
 
   val botCommands = new BotCommands(client, shutdown)
   client.commands.bulkRunNamed(
-    botCommands.hello, botCommands.info, botCommands.shutdown, botCommands.status, botCommands.react, botCommands.register,
-    botCommands.join, botCommands.show, botCommands.clear, botCommands.leave
+    botCommands.hello, botCommands.info, botCommands.shutdown, botCommands.status, botCommands.react,
+    botCommands.register, botCommands.join, botCommands.show, botCommands.clear, botCommands.leave, botCommands.add,
+    botCommands.remove, botCommands.start
   )
 
   client.onEventAsync { implicit c => {
@@ -27,7 +28,7 @@ class ScustomsBot(discordToken: String) {
       val channel = OptFuture.fromOption(StaticReferences.botChannel.resolve(StaticReferences.guildId))
       channel.map(channel => client.requestsHelper.run(channel.sendMessage("I'm back online")))
     case another =>
-      println(s"$another")
+      println(s"New event of type: ${another.getClass.getSimpleName}")
       OptFuture.unit
   }}
 

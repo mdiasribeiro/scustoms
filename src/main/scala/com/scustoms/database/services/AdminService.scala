@@ -1,24 +1,21 @@
 package com.scustoms.database.services
 
-import ackcord.CacheSnapshot
-import ackcord.commands.UserCommandMessage
-import ackcord.data.UserId
-import ackcord.requests.CreateMessage
+import ackcord.{CacheSnapshot, DiscordClient, OptFuture}
+import ackcord.commands.GuildMemberCommandMessage
 import ackcord.syntax.TextChannelSyntax
-import akka.NotUsed
+import com.scustoms.database.StaticReferences
+
+import scala.concurrent.ExecutionContext
 
 object AdminService {
-  def isFromAdmin(id: UserId): Boolean = {
-    id.toUnsignedLong == 138822865708515329L
-  }
-
-  def adminGate(command: UserCommandMessage[NotUsed])(f: => CreateMessage): CreateMessage = {
-    command.user.discriminator
-    if (isFromAdmin(command.user.id)) {
+  def adminGate[T](command: GuildMemberCommandMessage[T])(f: => OptFuture[Unit])
+               (implicit client: DiscordClient, ec: ExecutionContext): OptFuture[Unit] = {
+    if (command.guildMember.hasRoleAboveId(command.guild, Seq(StaticReferences.adminRoleId))) {
       f
     } else {
       implicit val c: CacheSnapshot = command.cache
-      command.textChannel.sendMessage(s"Vai-te foder ${command.user.username}, não mandas em mim!")
+      val message = s"Sorry ${command.user.mention}, you lack sufficient permissions to use that command."
+      client.requestsHelper.run(command.textChannel.sendMessage(message)).map(_ => ())
     }
   }
 }
