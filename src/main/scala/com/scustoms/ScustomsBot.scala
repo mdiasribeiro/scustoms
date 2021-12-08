@@ -15,9 +15,8 @@ class ScustomsBot(discordToken: String) {
 
   val botCommands = new BotCommands(client, shutdown)
   client.commands.bulkRunNamed(
-    botCommands.hello, botCommands.info, botCommands.shutdown, botCommands.status, botCommands.react,
-    botCommands.register, botCommands.join, botCommands.show, botCommands.clear, botCommands.leave, botCommands.add,
-    botCommands.remove, botCommands.start
+    botCommands.hello, botCommands.info, botCommands.shutdown, botCommands.register, botCommands.join,
+    botCommands.show, botCommands.clear, botCommands.leave, botCommands.add, botCommands.remove, botCommands.start
   )
 
   client.onEventAsync { implicit c => {

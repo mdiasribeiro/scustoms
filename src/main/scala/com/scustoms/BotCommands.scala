@@ -3,7 +3,6 @@ package com.scustoms
 import ackcord.{DiscordClient, OptFuture}
 import ackcord.commands.{CommandBuilder, CommandController, GuildMemberCommandMessage, MessageParser, NamedCommand, NamedComplexCommand}
 import ackcord.data.Permission
-import ackcord.requests.CreateReaction
 import akka.NotUsed
 import ackcord.syntax.TextChannelSyntax
 import com.scustoms.Emojis.{positiveMark, negativeMark}
@@ -31,102 +30,70 @@ class BotCommands(client: DiscordClient, shutdownHook: () => Unit) extends Comma
     .named(userCommandSymbols, Seq("hello"))
     .withRequest(m => m.textChannel.sendMessage(s"Hello ${m.user.username}!"))
 
-  val status: NamedCommand[NotUsed] = GuildCommand
-    .named(userCommandSymbols, Seq("status"))
-    .withRequest(m => {
-      m.textChannel.sendMessage(s"I'm currently running version '0.03' on 'docker-compose-host'")
-    })
-
   val info: NamedCommand[NotUsed] = GuildCommand
     .named(userCommandSymbols, Seq("info"))
-    .asyncOpt(implicit userCommandMessage => {
-      val findPlayerFuture = OptFuture.fromFuture(DatabaseService.playerKeeper.find(userCommandMessage.user.id))
-      findPlayerFuture.flatMap {
+    .asyncOpt(implicit userCommandMessage =>
+      OptFuture.fromFuture(DatabaseService.playerKeeper.find(userCommandMessage.user.id)).flatMap {
         case Some(player) =>
-          val react = CreateReaction(userCommandMessage.textChannel.id, userCommandMessage.message.id, positiveMark)
           val message =
             s"""${userCommandMessage.user.mention}
               |In-game name: ${player.gameUsername}
               |Conservative rating: ${player.rating.getConservativeRating}
               |Mean: ${player.rating.getMean}
               |Std deviation: ${player.rating.getStandardDeviation}""".stripMargin
-          val respond = userCommandMessage.textChannel.sendMessage(message)
-          client.requestsHelper.runMany(react, respond).map(_ => ())
+          DiscordUtils.reactAndRespond(positiveMark, message)
         case None =>
-          val react = CreateReaction(userCommandMessage.textChannel.id, userCommandMessage.message.id, negativeMark)
-          val message = "Player not found. Make sure you have registered first."
-          val respond = userCommandMessage.textChannel.sendMessage(message)
-          client.requestsHelper.runMany(react, respond).map(_ => ())
+          DiscordUtils.reactAndRespond(negativeMark, "Player not found. Make sure you have registered first.")
       }
-    })
-
-  val react: NamedCommand[NotUsed] = GuildCommand
-    .named(userCommandSymbols, Seq("react"))
-    .asyncOpt(implicit userCommandMessage => {
-      val react = CreateReaction(userCommandMessage.textChannel.id, userCommandMessage.message.id, positiveMark)
-      client.requestsHelper.run(react).map(_ => ())
-    })
+    )
 
   val register: NamedCommand[NotUsed] = GuildCommand
     .named(userCommandSymbols, Seq("register"))
     .asyncOpt(implicit m => {
       val playerCreate = PlayerKeeper.PlayerCreate(m.user.id, m.user.username, m.user.username)
-      val insertedPlayer = DatabaseService.playerKeeper.insert(playerCreate)
-      OptFuture.fromFuture(insertedPlayer).map {
+      OptFuture.fromFuture(DatabaseService.playerKeeper.insert(playerCreate)).map {
         case Right(_) =>
-          val react = CreateReaction(m.textChannel.id, m.message.id, positiveMark)
-          val respond = m.textChannel.sendMessage(s"Player '${m.user.username}' successfully added")
-          client.requestsHelper.runMany(react, respond).map(_ => ())
+          DiscordUtils.reactAndRespond(positiveMark, s"Player '${m.user.username}' successfully added")
         case Left(PlayerKeeper.PlayerAlreadyExists) =>
-          val react = CreateReaction(m.textChannel.id, m.message.id, negativeMark)
-          val respond = m.textChannel.sendMessage(s"Player '${m.user.username}' already exists")
-          client.requestsHelper.runMany(react, respond).map(_ => ())
+          DiscordUtils.reactAndRespond(negativeMark, s"Player '${m.user.username}' already exists")
       }
     })
 
-  val join: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
+  val join: NamedComplexCommand[String, NotUsed] = GuildCommand
     .named(userCommandSymbols, Seq("join"))
-    .parsing[Option[String]]
+    .parsing[String]
     .asyncOpt(implicit command => {
-      println(command.parsed)
-      val parsedRole: Either[QueueError, Role] = QueueService.parseRole(command.parsed.getOrElse("fill")).toRight(ErrorParsingRole)
-
       val result: Future[Either[QueueError, QueuedPlayer]] = DatabaseService.playerKeeper.exists(command.user.id).map {
         case false =>
           Left(PlayerDoesNotExist)
         case true if queueService.contains(command.user.id) =>
           Left(PlayerAlreadyInQueue)
         case true =>
-          parsedRole.map(role => QueuedPlayer(command.user.id, role))
+          QueueService
+            .parseRole(command.parsed)
+            .toRight(ErrorParsingRole)
+            .map(role => QueuedPlayer(command.user.id, role))
       }
 
       OptFuture.fromFuture(result).map {
-        case Left(error) =>
-          val react = CreateReaction(command.textChannel.id, command.message.id, negativeMark)
-          val respond = command.textChannel.sendMessage(error.message)
-          client.requestsHelper.runMany(react, respond)
         case Right(queuedPlayer) =>
           queueService.add(queuedPlayer)
-          val react = CreateReaction(command.textChannel.id, command.message.id, positiveMark)
           val message = s"${command.user.mention} joined the queue (role: ${queuedPlayer.role}). Current queue size: ${queueService.length}"
-          val respond = command.textChannel.sendMessage(message)
-          client.requestsHelper.runMany(react, respond)
+          DiscordUtils.reactAndRespond(positiveMark, message)
+        case Left(error) =>
+          DiscordUtils.reactAndRespond(negativeMark, error.message)
       }
     })
 
   val leave: NamedCommand[NotUsed] = GuildCommand
     .named(userCommandSymbols, Seq("leave"))
-    .asyncOpt(implicit command => {
+    .asyncOpt(implicit command =>
       if (queueService.remove(command.user.id)) {
-        val react = CreateReaction(command.textChannel.id, command.message.id, positiveMark)
-        val respond = command.textChannel.sendMessage(s"${command.user.mention} left the queue. Current queue size: ${queueService.length}")
-        client.requestsHelper.runMany(react, respond).map(_ => ())
+        DiscordUtils.reactAndRespond(positiveMark, s"${command.user.mention} left the queue. Current queue size: ${queueService.length}")
       } else {
-        val react = CreateReaction(command.textChannel.id, command.message.id, negativeMark)
-        val respond = command.textChannel.sendMessage("You are not in the queue")
-        client.requestsHelper.runMany(react, respond).map(_ => ())
+        DiscordUtils.reactAndRespond(negativeMark, "You are not in the queue")
       }
-    })
+    )
 
   val show: NamedCommand[NotUsed] = GuildCommand
     .named(userCommandSymbols, Seq("show"))
@@ -146,37 +113,27 @@ class BotCommands(client: DiscordClient, shutdownHook: () => Unit) extends Comma
     .named(adminCommandSymbols, Seq("clear"))
     .asyncOpt(implicit m => {
       queueService.clear()
-      client.requestsHelper.run(m.textChannel.sendMessage("Queue has been cleared")).map(_ => ())
+      DiscordUtils.reactAndRespond(positiveMark, "Queue has been cleared")
     })
 
-  val add: NamedComplexCommand[(String, Option[String]), NotUsed] = GuildCommand
+  val add: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
     .named(adminCommandSymbols, Seq("add"))
-    .parsing[(String, Option[String])]
+    .parsing[(String, String)]
     .asyncOpt(implicit command => {
       val parsedUserId = DiscordUtils.getUserIdFromMention(command.parsed._1)
-      val parsedRole = QueueService.parseRole(command.parsed._2.getOrElse("fill"))
+      val parsedRole = QueueService.parseRole(command.parsed._2)
       (parsedUserId, parsedRole) match {
         case (Some(userId), Some(role)) =>
-          println(s"detected mention id: $userId")
           if (queueService.add(QueueService.QueuedPlayer(userId, role))) {
-            val react = CreateReaction(command.textChannel.id, command.message.id, positiveMark)
-            val respond = command.textChannel.sendMessage(s"${command.parsed} was added to the queue")
-            client.requestsHelper.runMany(react, respond).map(_ => ())
+            DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed._1} was added to the queue with role: ${command.parsed._2}")
           } else {
-            val react = CreateReaction(command.textChannel.id, command.message.id, negativeMark)
-            val respond = command.textChannel.sendMessage(s"${command.parsed} is already in the queue")
-            client.requestsHelper.runMany(react, respond).map(_ => ())
+            DiscordUtils.reactAndRespond(negativeMark, s"${command.parsed._1} is already in the queue")
           }
-        case (Some(userId), None) =>
-          println(s"detected mention id: $userId")
-          val react = CreateReaction(command.textChannel.id, command.message.id, negativeMark)
-          val respond = command.textChannel.sendMessage("Player role could not be parsed")
-          client.requestsHelper.runMany(react, respond).map(_ => ())
+        case (Some(_), None) =>
+          DiscordUtils.reactAndRespond(negativeMark, "Player role could not be parsed")
         case (None, _) =>
-          val react = CreateReaction(command.textChannel.id, command.message.id, negativeMark)
-          val respond = command.textChannel.sendMessage("Mention could not be parsed")
-          client.requestsHelper.runMany(react, respond).map(_ => ())
+          DiscordUtils.reactAndRespond(negativeMark, "Mention could not be parsed")
       }
     })
 
@@ -185,22 +142,13 @@ class BotCommands(client: DiscordClient, shutdownHook: () => Unit) extends Comma
     .named(adminCommandSymbols, Seq("remove"))
     .parsing[String]
     .asyncOpt(implicit command => {
-      DiscordUtils.getUserIdFromMention(command.parsed) match {
-        case Some(userId) =>
-          println(s"detected mention id: $userId")
-          if (queueService.remove(userId)) {
-            val react = CreateReaction(command.textChannel.id, command.message.id, positiveMark)
-            val respond = command.textChannel.sendMessage(s"${command.parsed} was removed from the queue")
-            client.requestsHelper.runMany(react, respond).map(_ => ())
-          } else {
-            val react = CreateReaction(command.textChannel.id, command.message.id, negativeMark)
-            val respond = command.textChannel.sendMessage("Player was not found in the queue")
-            client.requestsHelper.runMany(react, respond).map(_ => ())
-          }
+      DiscordUtils.getUserIdFromMention(command.parsed).map(queueService.remove) match {
+        case Some(true) =>
+          DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} was removed from the queue")
+        case Some(false) =>
+          DiscordUtils.reactAndRespond(negativeMark, "Player was not found in the queue")
         case None =>
-          val react = CreateReaction(command.textChannel.id, command.message.id, negativeMark)
-          val respond = command.textChannel.sendMessage("Mention could not be parsed")
-          client.requestsHelper.runMany(react, respond).map(_ => ())
+          DiscordUtils.reactAndRespond(negativeMark, "Mention could not be parsed")
       }
     })
 

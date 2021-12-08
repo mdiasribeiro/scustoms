@@ -5,7 +5,6 @@ import ackcord.commands.GuildMemberCommandMessage
 import ackcord.data.UserId
 import ackcord.requests.CreateReaction
 import ackcord.syntax.TextChannelSyntax
-import com.scustoms.Emojis.negativeMark
 
 import scala.concurrent.ExecutionContext
 
