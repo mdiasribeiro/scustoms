@@ -14,10 +14,7 @@ object Main extends App {
   } else {
     if (debugMode) {
       import DatabaseService.ec
-      import com.scustoms.database.trueskill.RatingService.{calculator, gameInfo, teams}
       DatabaseService.clearDatabase().flatMap(_ => DatabaseService.setupDatabase())
-      //println(s"Teams before: $teams")
-      //println(s"Teams after: ${calculator.calculateNewRatings(gameInfo, teams, 1, 2)}")
       System.exit(0)
     } else
       new ScustomsBot(discordToken)

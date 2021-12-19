@@ -12,7 +12,7 @@ object QueueService {
     def message: String
   }
   final case object ErrorParsingRole extends QueueError {
-    override def message: String = "Error parsing desired roles."
+    override def message: String = "Error parsing desired role."
   }
   final case object PlayerDoesNotExist extends QueueError {
     override def message: String = "Player was not found. Make sure you register before joining the queue."
@@ -72,14 +72,21 @@ class QueueService {
   def length: Int = queue.length
 
   def extendedInfo(implicit ec: ExecutionContext): Future[Seq[ExtendedQueuedPlayer]] = {
-    val allPlayersFuture = DatabaseService.playerKeeper.findAll(queue.map(_.discordId))
-    allPlayersFuture.map(allPlayers => {
-      queue
-        .sortBy(_.discordId.toUnsignedLong)
-        .zip(allPlayers.sortBy(_.discordId.toUnsignedLong))
-        .map {
-          case (queuedPlayer, dbPlayer) => ExtendedQueuedPlayer(queuedPlayer.discordId, queuedPlayer.role, dbPlayer)
-        }
-    })
+    val currentPlayers = queue
+    DatabaseService.playerKeeper
+      .findAll(currentPlayers.map(_.discordId))
+      .map(allPlayers => {
+        currentPlayers
+          .sortBy(_.discordId.toUnsignedLong)
+          .zip(allPlayers.sortBy(_.discordId.toUnsignedLong))
+          .map {
+            case (queuedPlayer, dbPlayer) => ExtendedQueuedPlayer(queuedPlayer.discordId, queuedPlayer.role, dbPlayer)
+          }
+      })
+      .recover {
+        case error =>
+          println(s"Error occurred: ${error.getMessage}")
+          Seq.empty
+      }
   }
 }

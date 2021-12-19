@@ -1,26 +1,74 @@
 package com.scustoms.database.trueskill
 
-import ackcord.data.UserId
-import com.scustoms.database.keepers.PlayerKeeper.Player
+import com.scustoms.MatchmakingService.{Match, MatchPlayer}
+import com.scustoms.QueueService
+import com.scustoms.QueueService.ExtendedQueuedPlayer
 import de.gesundkrank.jskills.{GameInfo, IPlayer, ITeam, Rating}
-import de.gesundkrank.jskills.trueskill.TwoTeamTrueSkillCalculator
+import de.gesundkrank.jskills.trueskill.{TwoPlayerTrueSkillCalculator, TwoTeamTrueSkillCalculator}
 
 import java.util
-import scala.jdk.CollectionConverters._
 
 object RatingService {
-
+  import scala.jdk.CollectionConverters._
   class ScustomsTeam extends util.HashMap[IPlayer, Rating] with ITeam
 
-  val calculator = new TwoTeamTrueSkillCalculator()
+  case class LaneMatchUp(quality: Double, player1: MatchPlayer, player2: MatchPlayer)
+
+  private val trueSkillTeamCalculator = new TwoTeamTrueSkillCalculator()
+  private val trueSkillPlayerCalculator = new TwoPlayerTrueSkillCalculator()
   val gameInfo: GameInfo = GameInfo.getDefaultGameInfo
-  val player1Rating: Rating = new Rating(gameInfo.getInitialMean, gameInfo.getInitialStandardDeviation)
-  val player1: IPlayer = Player(1, UserId(138822865708515329L), "H4uZ", "H4uZ", player1Rating)
-  val player6Rating: Rating = new Rating(gameInfo.getInitialMean, gameInfo.getInitialStandardDeviation)
-  val player6: IPlayer = Player(6, UserId(349606871210000385L), "Giwinho", "Giwinho", player6Rating)
-  val team1: ITeam = new ScustomsTeam()
-  team1.put(player1, player1Rating)
-  val team2: ITeam = new ScustomsTeam()
-  team2.put(player6, player6Rating)
-  val teams: util.List[ITeam] = Seq(team1, team2).asJava
+
+  def tryMatch(players: Seq[ExtendedQueuedPlayer], role: QueueService.Role): Option[(LaneMatchUp, Seq[ExtendedQueuedPlayer])] = {
+    val team1: ITeam = new ScustomsTeam()
+    val team2: ITeam = new ScustomsTeam()
+    val queueLength = players.length
+    if (queueLength >= 2) {
+      val results = (0 until queueLength).flatMap { i =>
+        val player1 = MatchPlayer.fromExtendedQueuedPlayer(players(i), role)
+        swapTeamPlayers(team1, player1)
+        ((i + 1) until queueLength).map { j =>
+          val player2 = MatchPlayer.fromExtendedQueuedPlayer(players(j), role)
+          swapTeamPlayers(team2, player2)
+          val matchUp = trueSkillPlayerCalculator.calculateMatchQuality(gameInfo, Seq(team1, team2).asJava)
+          LaneMatchUp(matchUp, player1, player2)
+        }
+      }
+      val bestMatchUp = results.maxBy(_.quality)
+      Some((bestMatchUp, players.filterNot(p => p.discordId == bestMatchUp.player1.discordId || p.discordId == bestMatchUp.player2.discordId)))
+    } else {
+      None
+    }
+  }
+
+  def arrangeTeams(top: LaneMatchUp, jungle: LaneMatchUp, mid: LaneMatchUp, bot: LaneMatchUp, support: LaneMatchUp): Match = {
+    val team1: ITeam = new ScustomsTeam()
+    val team2: ITeam = new ScustomsTeam()
+    val (t1, t2) = (top.player1, top.player2)
+
+    val firstTeam = Seq(false, true)
+
+    val allMatches = for {
+      j <- firstTeam
+      m <- firstTeam
+      b <- firstTeam
+      s <- firstTeam
+    } yield {
+      val (j1, j2) = if (j) (jungle.player1, jungle.player2) else (jungle.player2, jungle.player1)
+      val (m1, m2) = if (m) (mid.player1, mid.player2) else (mid.player2, mid.player1)
+      val (b1, b2) = if (b) (bot.player1, bot.player2) else (bot.player2, bot.player1)
+      val (s1, s2) = if (s) (support.player1, support.player2) else (support.player2, support.player1)
+
+      swapTeamPlayers(team1, t1, j1, m1, b1, s1)
+      swapTeamPlayers(team2, t2, j2, m2, b2, s2)
+
+      val quality = trueSkillTeamCalculator.calculateMatchQuality(gameInfo, Seq(team1, team2).asJava)
+      Match(quality, Seq(t1, j1, m1, b1, s1), Seq(t2, j2, m2, b2, s2))
+    }
+    allMatches.maxBy(_.quality)
+  }
+
+  def swapTeamPlayers(team: ITeam, players: MatchPlayer*): Unit = {
+    team.clear()
+    players.foreach(p => team.put(p.previousState, p.previousState.rating.getRoleRating(p.role)))
+  }
 }

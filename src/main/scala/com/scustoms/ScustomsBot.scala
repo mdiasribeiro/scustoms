@@ -11,13 +11,14 @@ class ScustomsBot(discordToken: String) {
   val clientSettings: ClientSettings = ClientSettings(discordToken)
 
   val client: DiscordClient = Await.result(clientSettings.createClient(), 10.seconds)
+  val queueService = new QueueService
+  val matchService = new MatchmakingService
   implicit val ec: ExecutionContextExecutor = client.executionContext
 
-  val botCommands = new BotCommands(client, shutdown)
-  client.commands.bulkRunNamed(
-    botCommands.hello, botCommands.info, botCommands.shutdown, botCommands.register, botCommands.join,
-    botCommands.show, botCommands.clear, botCommands.leave, botCommands.add, botCommands.remove, botCommands.start
-  )
+  val userCommands = new UserCommands(client, queueService, matchService)
+  val adminCommands = new AdminCommands(client, queueService, matchService)
+  client.commands.bulkRunNamed(userCommands.commandList: _*)
+  client.commands.bulkRunNamed(adminCommands.commandList: _*)
 
   client.onEventAsync { implicit c => {
     case APIMessage.Ready(_) =>
@@ -25,19 +26,11 @@ class ScustomsBot(discordToken: String) {
       OptFuture.unit
     case APIMessage.GuildCreate(guild, _) if guild.id == StaticReferences.guildId =>
       val channel = OptFuture.fromOption(StaticReferences.botChannel.resolve(StaticReferences.guildId))
-      channel.map(channel => client.requestsHelper.run(channel.sendMessage("I'm back online")))
+      channel.map(channel => client.requestsHelper.run(channel.sendMessage("I'm back online.")))
     case another =>
       println(s"New event of type: ${another.getClass.getSimpleName}")
       OptFuture.unit
   }}
 
   client.login()
-
-  def shutdown(): Unit = {
-    println("Shutting down in 5 seconds...")
-    for {
-      _ <- Future {Thread.sleep(5000)}
-      _ <- client.shutdownAckCord()
-    } yield System.exit(0)
-  }
 }
