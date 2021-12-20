@@ -1,17 +1,16 @@
-package com.scustoms
+package com.scustoms.services
 
 import ackcord.data.UserId
-import com.scustoms.MatchmakingService.{Match, NotEnoughPlayers}
-import com.scustoms.QueueService.{ExtendedQueuedPlayer, Role}
-import com.scustoms.database.keepers.PlayerKeeper.Player
-import com.scustoms.database.trueskill.RatingService
-import com.scustoms.database.trueskill.RatingService.LaneMatchUp
+import com.scustoms.database.keepers.PlayerKeeper.PlayerWithStatistics
+import RatingService.LaneMatchUp
+import com.scustoms.database.keepers.MatchKeeper
+import com.scustoms.services.QueueService.{ExtendedQueuedPlayer, Role}
 
 object MatchmakingService {
   object MatchPlayer {
-    def fromExtendedQueuedPlayer(p: ExtendedQueuedPlayer, newRole: Role): MatchPlayer = MatchPlayer(p.discordId, newRole, p.player)
+    def fromExtendedQueuedPlayer(p: ExtendedQueuedPlayer, newRole: Role): MatchPlayer = MatchPlayer(p.discordId, newRole, p.playerWithStatistics)
   }
-  case class MatchPlayer(discordId: UserId, role: Role, previousState: Player)
+  case class MatchPlayer(discordId: UserId, role: Role, previousState: PlayerWithStatistics)
 
   case class Match(quality: Double, teamA: Seq[MatchPlayer], teamB: Seq[MatchPlayer])
 
@@ -19,9 +18,9 @@ object MatchmakingService {
   case object NotEnoughPlayers extends MatchError
 }
 
-class MatchmakingService {
-
-  private var matches: Map[Long, Match] = Map.empty
+class MatchmakingService(matchKeeper: MatchKeeper) {
+  import MatchmakingService._
+  var ongoingMatch: Option[Match] = None
 
   def calculateRoleMatch(players: Seq[ExtendedQueuedPlayer]): Match = {
     require(players.length >= 10, NotEnoughPlayers)

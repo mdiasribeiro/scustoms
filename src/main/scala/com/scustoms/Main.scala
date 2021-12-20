@@ -1,6 +1,7 @@
 package com.scustoms
 
-import com.scustoms.database.DatabaseService
+import com.scustoms.bot.ScustomsBot
+import com.scustoms.database.DatabaseManager
 import com.typesafe.config.ConfigFactory
 
 object Main extends App {
@@ -13,10 +14,11 @@ object Main extends App {
     System.exit(-1)
   } else {
     if (debugMode) {
-      import DatabaseService.ec
-      DatabaseService.clearDatabase().flatMap(_ => DatabaseService.setupDatabase())
+      val databaseManager = new DatabaseManager
+      databaseManager.clearDatabase()
       System.exit(0)
-    } else
+    } else {
       new ScustomsBot(discordToken)
+    }
   }
 }

@@ -1,22 +1,34 @@
-package com.scustoms
+package com.scustoms.bot
 
 import ackcord.syntax.TextChannelSyntax
 import ackcord.{APIMessage, ClientSettings, DiscordClient, OptFuture}
-import com.scustoms.database.StaticReferences
+import com.scustoms.database.keepers.{MatchKeeper, PlayerKeeper, PlayerStatisticsKeeper}
+import com.scustoms.database.{DatabaseManager, StaticReferences}
+import com.scustoms.services.{MatchmakingService, PlayerService, QueueService}
 
-import scala.concurrent.{Await, ExecutionContextExecutor, Future}
 import scala.concurrent.duration._
+import scala.concurrent.{Await, ExecutionContextExecutor}
 
 class ScustomsBot(discordToken: String) {
   val clientSettings: ClientSettings = ClientSettings(discordToken)
 
   val client: DiscordClient = Await.result(clientSettings.createClient(), 10.seconds)
-  val queueService = new QueueService
-  val matchService = new MatchmakingService
   implicit val ec: ExecutionContextExecutor = client.executionContext
 
-  val userCommands = new UserCommands(client, queueService, matchService)
-  val adminCommands = new AdminCommands(client, queueService, matchService)
+  val databaseManager = new DatabaseManager
+  //Await.result(databaseManager.clearDatabase(), 10.seconds)
+  Await.result(databaseManager.setupDatabase(), 10.seconds)
+
+  val playerKeeper = new PlayerKeeper(databaseManager)
+  val playerStatisticsKeeper = new PlayerStatisticsKeeper(databaseManager)
+  val matchKeeper = new MatchKeeper(databaseManager)
+
+  val playerService = new PlayerService(playerKeeper, playerStatisticsKeeper)
+  val queueService = new QueueService(playerService)
+  val matchmakingService = new MatchmakingService(matchKeeper)
+
+  val userCommands = new UserCommands(client, queueService, playerService)
+  val adminCommands = new AdminCommands(client, queueService, playerService, matchmakingService)
   client.commands.bulkRunNamed(userCommands.commandList: _*)
   client.commands.bulkRunNamed(adminCommands.commandList: _*)
 

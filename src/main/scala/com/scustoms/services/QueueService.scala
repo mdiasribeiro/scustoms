@@ -1,9 +1,9 @@
-package com.scustoms
+package com.scustoms.services
 
 import ackcord.data.UserId
-import com.scustoms.QueueService.{ExtendedQueuedPlayer, QueuedPlayer}
-import com.scustoms.database.DatabaseService
-import com.scustoms.database.keepers.PlayerKeeper.Player
+import com.scustoms.database.DatabaseManager.DatabaseError
+import com.scustoms.database.keepers.PlayerKeeper.PlayerWithStatistics
+import com.scustoms.services.QueueService.{ExtendedQueuedPlayer, QueuedPlayer}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -40,10 +40,10 @@ object QueueService {
   }
 
   case class QueuedPlayer(discordId: UserId, role: Role)
-  case class ExtendedQueuedPlayer(discordId: UserId, role: Role, player: Player)
+  case class ExtendedQueuedPlayer(discordId: UserId, role: Role, playerWithStatistics: PlayerWithStatistics)
 }
 
-class QueueService {
+class QueueService(playerService: PlayerService) {
 
   private var queue: Seq[QueuedPlayer] = Seq.empty
 
@@ -71,22 +71,17 @@ class QueueService {
 
   def length: Int = queue.length
 
-  def extendedInfo(implicit ec: ExecutionContext): Future[Seq[ExtendedQueuedPlayer]] = {
+  def extendedInfo(implicit ec: ExecutionContext): Future[Either[DatabaseError, Seq[ExtendedQueuedPlayer]]] = {
     val currentPlayers = queue
-    DatabaseService.playerKeeper
+    playerService
       .findAll(currentPlayers.map(_.discordId))
-      .map(allPlayers => {
+      .map(_.map(allPlayers => {
         currentPlayers
           .sortBy(_.discordId.toUnsignedLong)
           .zip(allPlayers.sortBy(_.discordId.toUnsignedLong))
           .map {
             case (queuedPlayer, dbPlayer) => ExtendedQueuedPlayer(queuedPlayer.discordId, queuedPlayer.role, dbPlayer)
           }
-      })
-      .recover {
-        case error =>
-          println(s"Error occurred: ${error.getMessage}")
-          Seq.empty
-      }
+      }))
   }
 }

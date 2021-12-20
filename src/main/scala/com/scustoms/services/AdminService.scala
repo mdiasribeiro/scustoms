@@ -1,4 +1,4 @@
-package com.scustoms.database.services
+package com.scustoms.services
 
 import ackcord.{CacheSnapshot, DiscordClient, OptFuture}
 import ackcord.commands.GuildMemberCommandMessage

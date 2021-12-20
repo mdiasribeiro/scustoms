@@ -1,100 +1,108 @@
 package com.scustoms.database.keepers
 
 import ackcord.data.UserId
-import com.scustoms.QueueService
-import com.scustoms.database.DatabaseService
-import com.scustoms.database.trueskill.RatingService
-import de.gesundkrank.jskills.{IPlayer, Rating}
+import com.scustoms.database.DatabaseManager
+import com.scustoms.database.DatabaseManager.DatabaseError
+import com.scustoms.database.keepers.PlayerStatisticsKeeper.PlayerStatistics
+import com.scustoms.services.QueueService
+import de.gesundkrank.jskills.IPlayer
 
 import scala.concurrent.{ExecutionContext, Future}
 import slick.jdbc.SQLiteProfile.api._
 import slick.lifted.ProvenShape
 
 object PlayerKeeper {
-  sealed trait DatabaseError
-  final case object PlayerAlreadyExists extends DatabaseError
+  sealed trait PlayerDatabaseError extends DatabaseError
+  final case object PlayerAlreadyExists extends PlayerDatabaseError
+  final case object PlayerNotFound extends PlayerDatabaseError
 
-  object Player {
-    def fromTuple(tuple: (Long, Long, String, String, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double)): Player = {
-      val ratings = PlayerRatings(new Rating(tuple._5, tuple._6), new Rating(tuple._7, tuple._8),
-        new Rating(tuple._9, tuple._10), new Rating(tuple._11, tuple._12), new Rating(tuple._13, tuple._14)
-      )
-      Player(tuple._1, UserId(tuple._2), tuple._3, tuple._4, ratings)
+  type PlayerTableTuple = (Long, Long, String, String, Long, Long, Long, Long, Long)
+
+  case class PlayerWithStatistics(id: Long, discordId: UserId, discordUsername: String, gameUsername: String, top: PlayerStatistics,
+                    jungle: PlayerStatistics, mid: PlayerStatistics, bot: PlayerStatistics, support: PlayerStatistics) extends IPlayer {
+    def getTopStatistics: (QueueService.Role, PlayerStatistics) = {
+      Seq(
+        (top.rating.getConservativeRating, (QueueService.Top, top)),
+        (jungle.rating.getConservativeRating, (QueueService.Jungle, jungle)),
+        (mid.rating.getConservativeRating, (QueueService.Mid, mid)),
+        (bot.rating.getConservativeRating, (QueueService.Bot, bot)),
+        (support.rating.getConservativeRating, (QueueService.Support, support))
+      ).maxBy(_._1)._2
     }
-  }
 
-  case class PlayerRatings(top: Rating, jungle: Rating, mid: Rating, bot: Rating, support: Rating) {
-    def getRoleRating(role: QueueService.Role): Rating = {
+    def getRoleStatistics(role: QueueService.Role): Option[PlayerStatistics] = {
       role match {
-        case QueueService.Top => top
-        case QueueService.Jungle => jungle
-        case QueueService.Mid => mid
-        case QueueService.Bot => bot
-        case QueueService.Support => support
-        case QueueService.Fill => throw new Exception("Fill rating does not exist")
+        case QueueService.Top => Some(top)
+        case QueueService.Jungle => Some(jungle)
+        case QueueService.Mid => Some(mid)
+        case QueueService.Bot => Some(bot)
+        case QueueService.Support => Some(support)
+        case QueueService.Fill => None
       }
     }
-  }
-  case class Player(id: Long, discordId: UserId, discordUsername: String, gameUsername: String, rating: PlayerRatings) extends IPlayer {
-    def * : (Long, Long, String, String, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double) = {
-      (0L, discordId.toUnsignedLong, discordUsername, gameUsername,
-        rating.top.getMean, rating.top.getStandardDeviation,
-        rating.jungle.getMean, rating.jungle.getStandardDeviation,
-        rating.mid.getMean, rating.mid.getStandardDeviation,
-        rating.bot.getMean, rating.bot.getStandardDeviation,
-        rating.support.getMean, rating.support.getStandardDeviation
-      )
+
+    def niceString(role: QueueService.Role): String = {
+      getRoleStatistics(role).toRight(getTopStatistics) match {
+        case Right(statistics) =>
+          f"rating: ${statistics.rating.getConservativeRating}%1.2f"
+        case Left((topRole, statistics)) =>
+          f"top rating ($topRole): ${statistics.rating.getConservativeRating}%1.2f"
+      }
     }
+
+    def totalGames: Long = top.games + jungle.games + mid.games + bot.games + support.games
+
+    def totalWins: Long = top.wins + jungle.wins + mid.wins + bot.wins + support.wins
   }
-  case class PlayerCreate(discordId: UserId, discordUsername: String, gameUsername: String) {
-    def toPlayer: Player = {
-      val initialMean = RatingService.gameInfo.getInitialMean
-      val initialStd = RatingService.gameInfo.getInitialStandardDeviation
-      val starterRatings = PlayerRatings(new Rating(initialMean, initialStd), new Rating(initialMean, initialStd),
-        new Rating(initialMean, initialStd), new Rating(initialMean, initialStd), new Rating(initialMean, initialStd)
-      )
-      Player(0L, discordId, discordUsername, gameUsername, starterRatings)
+
+  object Player {
+    def fromTuple(tuple: PlayerTableTuple): Player = {
+      Player(tuple._1, UserId(tuple._2), tuple._3, tuple._4, tuple._5, tuple._6, tuple._7, tuple._8, tuple._9)
     }
   }
 
-  class Players(tag: Tag) extends Table[(Long, Long, String, String, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double)](tag, "players") {
+  case class Player(id: Long, discordId: UserId, discordUsername: String, gameUsername: String, top: Long,
+                    jungle: Long, mid: Long, bot: Long, support: Long)
+
+  case class PlayerCreate(discordId: UserId, discordUsername: String, gameUsername: String, topStatistics: Long,
+                          jungleStatistics: Long, midStatistics: Long, botStatistics: Long, supportStatistics: Long) {
+    def * : PlayerTableTuple = {
+      (0L, discordId.toUnsignedLong, discordUsername, gameUsername, topStatistics, jungleStatistics, midStatistics, botStatistics, supportStatistics)
+    }
+  }
+
+  class Players(tag: Tag) extends Table[PlayerTableTuple](tag, "players") {
     def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
     def discordId: Rep[Long] = column[Long]("discordId")
     def discordUsername: Rep[String] = column[String]("discordUsername")
     def gameUsername: Rep[String] = column[String]("gameUsername")
-    def topRatingMean: Rep[Double] = column[Double]("topRatingMean")
-    def topRatingStdDev: Rep[Double] = column[Double]("topRatingStdDev")
-    def jungleRatingMean: Rep[Double] = column[Double]("jungleRatingMean")
-    def jungleRatingStdDev: Rep[Double] = column[Double]("jungleRatingStdDev")
-    def midRatingMean: Rep[Double] = column[Double]("midRatingMean")
-    def midRatingStdDev: Rep[Double] = column[Double]("midRatingStdDev")
-    def botRatingMean: Rep[Double] = column[Double]("botRatingMean")
-    def botRatingStdDev: Rep[Double] = column[Double]("botRatingStdDev")
-    def supportRatingMean: Rep[Double] = column[Double]("supportRatingMean")
-    def supportRatingStdDev: Rep[Double] = column[Double]("supportRatingStdDev")
-    def * : ProvenShape[(Long, Long, String, String, Double, Double, Double, Double, Double, Double, Double, Double, Double, Double)] =
-      (id, discordId, discordUsername, gameUsername, topRatingMean, topRatingStdDev, jungleRatingMean, jungleRatingStdDev,
-        midRatingMean, midRatingStdDev, botRatingMean, botRatingStdDev, supportRatingMean, supportRatingStdDev)
+    def topStatistics: Rep[Long] = column[Long]("topStatistics")
+    def jungleStatistics: Rep[Long] = column[Long]("jungleStatistics")
+    def midStatistics: Rep[Long] = column[Long]("midStatistics")
+    def botStatistics: Rep[Long] = column[Long]("botStatistics")
+    def supportStatistics: Rep[Long] = column[Long]("supportStatistics")
+
+    def * : ProvenShape[PlayerTableTuple] =
+      (id, discordId, discordUsername, gameUsername, topStatistics, jungleStatistics, midStatistics, botStatistics, supportStatistics)
   }
 
   val playersTable: TableQuery[Players] = TableQuery[Players]
 }
 
-class PlayerKeeper(implicit ec: ExecutionContext) {
+class PlayerKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContext) {
   import PlayerKeeper._
 
-  def insert(playerCreate: PlayerCreate): Future[Either[DatabaseError, Int]] = {
-    this.exists(playerCreate.discordId).flatMap {
-      case true =>
-        Future.successful(Left(PlayerAlreadyExists))
-      case false =>
-        DatabaseService.runTransaction {
-          playersTable += playerCreate.toPlayer.*
-        }.map(Right(_))
-    }
+  def insert(playerCreate: PlayerCreate): Future[Int] = databaseManager.run {
+    playersTable += playerCreate.*
   }
 
-  def find(discordId: UserId): Future[Option[Player]] = DatabaseService.runTransaction {
+  def getAll: Future[Seq[Player]] = databaseManager.run {
+    playersTable
+      .result
+      .map(_.map(Player.fromTuple))
+  }
+
+  def find(discordId: UserId): Future[Option[Player]] = databaseManager.run {
     playersTable
       .filter(p => p.discordId === discordId.toUnsignedLong)
       .result
@@ -102,53 +110,30 @@ class PlayerKeeper(implicit ec: ExecutionContext) {
       .map(_.map(Player.fromTuple))
   }
 
-  def findAll(playerIds: Seq[UserId]): Future[Seq[Player]] = DatabaseService.runTransaction {
+  def findAll(playerIds: Seq[UserId]): Future[Either[DatabaseError, Seq[Player]]] = databaseManager.run {
     val players = playerIds.map(_.toUnsignedLong)
     playersTable
       .filter(p => p.discordId.inSet(players))
       .result
-      .map(_.map(Player.fromTuple))
+      .map {
+        case foundPlayers if foundPlayers.length == players.length =>
+          Right(foundPlayers.map(Player.fromTuple))
+        case _ =>
+          Left(PlayerNotFound)
+      }
   }
 
-  def exists(discordId: UserId): Future[Boolean] = DatabaseService.runTransaction {
+  def exists(discordId: UserId): Future[Boolean] = databaseManager.run {
     playersTable
       .filter(p => p.discordId === discordId.toUnsignedLong)
       .exists
       .result
   }
 
-  def updateUsernames(player: Player): Future[Int] = DatabaseService.runTransaction {
+  def updateUsernames(discordId: UserId, discordUsername: String, gameUsername: String): Future[Int] = databaseManager.runTransaction {
     playersTable
-      .filter(p => p.discordId === player.discordId.toUnsignedLong)
-      .map(p => (p.gameUsername, p.discordUsername, p.gameUsername))
-      .update((player.gameUsername, player.discordUsername, player.gameUsername))
-  }
-
-  def updateRating(player: Player, role: QueueService.Role): Future[Int] = DatabaseService.runTransaction {
-    val filteredTable = playersTable.filter(p => p.discordId === player.discordId.toUnsignedLong)
-    role match {
-      case QueueService.Top =>
-        filteredTable
-          .map(p => (p.gameUsername, p.topRatingMean, p.topRatingStdDev))
-          .update((player.gameUsername, player.rating.top.getMean, player.rating.top.getStandardDeviation))
-      case QueueService.Jungle =>
-        filteredTable
-          .map(p => (p.gameUsername, p.jungleRatingMean, p.jungleRatingStdDev))
-          .update((player.gameUsername, player.rating.jungle.getMean, player.rating.jungle.getStandardDeviation))
-      case QueueService.Mid =>
-        filteredTable
-          .map(p => (p.gameUsername, p.midRatingMean, p.midRatingStdDev))
-          .update((player.gameUsername, player.rating.mid.getMean, player.rating.mid.getStandardDeviation))
-      case QueueService.Bot =>
-        filteredTable
-          .map(p => (p.gameUsername, p.botRatingMean, p.botRatingStdDev))
-          .update((player.gameUsername, player.rating.bot.getMean, player.rating.bot.getStandardDeviation))
-      case QueueService.Support =>
-        filteredTable
-          .map(p => (p.gameUsername, p.supportRatingMean, p.supportRatingStdDev))
-          .update((player.gameUsername, player.rating.support.getMean, player.rating.support.getStandardDeviation))
-      case QueueService.Fill =>
-        throw new Exception("Fill rating does not exist")
-    }
+      .filter(p => p.discordId === discordId.toUnsignedLong)
+      .map(p => (p.discordUsername, p.gameUsername))
+      .update((discordUsername, gameUsername))
   }
 }

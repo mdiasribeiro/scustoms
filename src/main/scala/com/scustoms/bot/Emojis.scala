@@ -1,4 +1,4 @@
-package com.scustoms
+package com.scustoms.bot
 
 object Emojis {
   val positiveMark = "✅"

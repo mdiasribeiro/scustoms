@@ -1,10 +1,9 @@
-package com.scustoms.database.trueskill
+package com.scustoms.services
 
-import com.scustoms.MatchmakingService.{Match, MatchPlayer}
-import com.scustoms.QueueService
-import com.scustoms.QueueService.ExtendedQueuedPlayer
-import de.gesundkrank.jskills.{GameInfo, IPlayer, ITeam, Rating}
+import com.scustoms.services.MatchmakingService.{Match, MatchPlayer}
+import com.scustoms.services.QueueService.ExtendedQueuedPlayer
 import de.gesundkrank.jskills.trueskill.{TwoPlayerTrueSkillCalculator, TwoTeamTrueSkillCalculator}
+import de.gesundkrank.jskills.{GameInfo, IPlayer, ITeam, Rating}
 
 import java.util
 
@@ -52,23 +51,23 @@ object RatingService {
       m <- firstTeam
       b <- firstTeam
       s <- firstTeam
+      (j1, j2) = if (j) (jungle.player1, jungle.player2) else (jungle.player2, jungle.player1)
+      (m1, m2) = if (m) (mid.player1, mid.player2) else (mid.player2, mid.player1)
+      (b1, b2) = if (b) (bot.player1, bot.player2) else (bot.player2, bot.player1)
+      (s1, s2) = if (s) (support.player1, support.player2) else (support.player2, support.player1)
     } yield {
-      val (j1, j2) = if (j) (jungle.player1, jungle.player2) else (jungle.player2, jungle.player1)
-      val (m1, m2) = if (m) (mid.player1, mid.player2) else (mid.player2, mid.player1)
-      val (b1, b2) = if (b) (bot.player1, bot.player2) else (bot.player2, bot.player1)
-      val (s1, s2) = if (s) (support.player1, support.player2) else (support.player2, support.player1)
-
       swapTeamPlayers(team1, t1, j1, m1, b1, s1)
       swapTeamPlayers(team2, t2, j2, m2, b2, s2)
 
       val quality = trueSkillTeamCalculator.calculateMatchQuality(gameInfo, Seq(team1, team2).asJava)
       Match(quality, Seq(t1, j1, m1, b1, s1), Seq(t2, j2, m2, b2, s2))
     }
+
     allMatches.maxBy(_.quality)
   }
 
   def swapTeamPlayers(team: ITeam, players: MatchPlayer*): Unit = {
     team.clear()
-    players.foreach(p => team.put(p.previousState, p.previousState.rating.getRoleRating(p.role)))
+    players.foreach(p => team.put(p.previousState, p.previousState.getRoleStatistics(p.role).get.rating))
   }
 }
