@@ -14,4 +14,9 @@ object Utils {
       case Left(s) => Future.successful(Left(s))
       case Right(f) => Future.sequence(f).map(seq => Right(seq))
     }
+
+  def sequenceEither[A, B](s: Seq[Either[A, B]]): Either[A, Seq[B]] =
+    s.foldLeft(Right(Nil): Either[A, Seq[B]]) {
+      (acc, e) => for (x <- e; xs <- acc) yield xs :+ x
+    }
 }

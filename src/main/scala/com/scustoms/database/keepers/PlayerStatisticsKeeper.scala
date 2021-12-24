@@ -4,7 +4,7 @@ import ackcord.data.UserId
 import com.scustoms.database.DatabaseManager
 import com.scustoms.database.DatabaseManager.DatabaseError
 import com.scustoms.services.RatingService
-import de.gesundkrank.jskills.Rating
+import de.gesundkrank.jskills.{GameInfo, Rating}
 import slick.jdbc.SQLiteProfile.api._
 import slick.lifted.ProvenShape
 
@@ -18,7 +18,7 @@ object PlayerStatisticsKeeper {
 
   object PlayerStatistics {
     def emptyPlayerStatistics: PlayerStatistics = {
-      PlayerStatistics(0L, new Rating(RatingService.gameInfo.getInitialMean, RatingService.gameInfo.getInitialStandardDeviation), 0L, 0L)
+      PlayerStatistics(0L, new Rating(RatingService.defaultGameInfo.getInitialMean, RatingService.defaultGameInfo.getInitialStandardDeviation), 0L, 0L)
     }
 
     def fromTuple(tuple: PlayersStatisticsTableTuple): PlayerStatistics = {
@@ -62,7 +62,7 @@ class PlayerStatisticsKeeper(databaseManager: DatabaseManager)(implicit ec: Exec
     }
   }
 
-  def find(id: Long): Future[Option[PlayerStatistics]] = databaseManager.runTransaction {
+  def find(id: Long): Future[Option[PlayerStatistics]] = databaseManager.run {
     playersStatisticsTable
       .filter(p => p.id === id)
       .result
@@ -75,5 +75,11 @@ class PlayerStatisticsKeeper(databaseManager: DatabaseManager)(implicit ec: Exec
       .filter(p => p.id === playerStatistics.id)
       .map(p => (p.ratingMean, p.ratingStdDev, p.wins, p.games))
       .update((playerStatistics.rating.getMean, playerStatistics.rating.getStandardDeviation, playerStatistics.wins, playerStatistics.games))
+  }
+
+  def resetAll(gameInfo: GameInfo): Future[Int] = databaseManager.runTransaction {
+    playersStatisticsTable
+      .map(p => (p.ratingMean, p.ratingStdDev, p.wins, p.games))
+      .update((gameInfo.getInitialMean, gameInfo.getInitialStandardDeviation, 0, 0))
   }
 }

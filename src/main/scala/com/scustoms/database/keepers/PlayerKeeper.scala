@@ -5,7 +5,7 @@ import com.scustoms.database.DatabaseManager
 import com.scustoms.database.DatabaseManager.DatabaseError
 import com.scustoms.database.keepers.PlayerStatisticsKeeper.PlayerStatistics
 import com.scustoms.services.QueueService
-import de.gesundkrank.jskills.IPlayer
+import de.gesundkrank.jskills.Rating
 
 import scala.concurrent.{ExecutionContext, Future}
 import slick.jdbc.SQLiteProfile.api._
@@ -19,40 +19,43 @@ object PlayerKeeper {
   type PlayerTableTuple = (Long, Long, String, String, Long, Long, Long, Long, Long)
 
   case class PlayerWithStatistics(id: Long, discordId: UserId, discordUsername: String, gameUsername: String, top: PlayerStatistics,
-                    jungle: PlayerStatistics, mid: PlayerStatistics, bot: PlayerStatistics, support: PlayerStatistics) extends IPlayer {
+                    jungle: PlayerStatistics, mid: PlayerStatistics, bot: PlayerStatistics, support: PlayerStatistics) {
     def getTopStatistics: (QueueService.Role, PlayerStatistics) = {
       Seq(
-        (top.rating.getConservativeRating, (QueueService.Top, top)),
-        (jungle.rating.getConservativeRating, (QueueService.Jungle, jungle)),
-        (mid.rating.getConservativeRating, (QueueService.Mid, mid)),
-        (bot.rating.getConservativeRating, (QueueService.Bot, bot)),
+        (top.rating.getConservativeRating,     (QueueService.Top, top)),
+        (jungle.rating.getConservativeRating,  (QueueService.Jungle, jungle)),
+        (mid.rating.getConservativeRating,     (QueueService.Mid, mid)),
+        (bot.rating.getConservativeRating,     (QueueService.Bot, bot)),
         (support.rating.getConservativeRating, (QueueService.Support, support))
       ).maxBy(_._1)._2
     }
 
-    def getRoleStatistics(role: QueueService.Role): Option[PlayerStatistics] = {
+    def getRoleStatistics(role: QueueService.Role): PlayerStatistics = {
       role match {
-        case QueueService.Top => Some(top)
-        case QueueService.Jungle => Some(jungle)
-        case QueueService.Mid => Some(mid)
-        case QueueService.Bot => Some(bot)
-        case QueueService.Support => Some(support)
-        case QueueService.Fill => None
+        case QueueService.Top     => top
+        case QueueService.Jungle  => jungle
+        case QueueService.Mid     => mid
+        case QueueService.Bot     => bot
+        case QueueService.Support => support
       }
     }
 
-    def niceString(role: QueueService.Role): String = {
-      getRoleStatistics(role).toRight(getTopStatistics) match {
-        case Right(statistics) =>
-          f"rating: ${statistics.rating.getConservativeRating}%1.2f"
-        case Left((topRole, statistics)) =>
-          f"top rating ($topRole): ${statistics.rating.getConservativeRating}%1.2f"
-      }
-    }
+    def niceString(role: QueueService.Role): String =
+      f"rating: ${getRoleStatistics(role).rating.getConservativeRating}%1.2f"
 
     def totalGames: Long = top.games + jungle.games + mid.games + bot.games + support.games
 
     def totalWins: Long = top.wins + jungle.wins + mid.wins + bot.wins + support.wins
+
+    def toPlayer: Player = Player(id, discordId, discordUsername, gameUsername, top.id, jungle.id, mid.id, bot.id, support.id)
+
+    def updatedRating(role: QueueService.Role, newRating: Rating): PlayerWithStatistics = role match {
+      case QueueService.Top     => this.copy(top = top.copy(rating = newRating))
+      case QueueService.Jungle  => this.copy(jungle = jungle.copy(rating = newRating))
+      case QueueService.Mid     => this.copy(mid = mid.copy(rating = newRating))
+      case QueueService.Bot     => this.copy(bot = bot.copy(rating = newRating))
+      case QueueService.Support => this.copy(support = support.copy(rating = newRating))
+    }
   }
 
   object Player {

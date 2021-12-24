@@ -9,13 +9,18 @@ import Emojis.{negativeMark, positiveMark}
 import com.scustoms.database.keepers.PlayerKeeper
 import com.scustoms.database.StaticReferences
 import com.scustoms.database.keepers.PlayerKeeper.PlayerNotFound
+import com.scustoms.services.MatchmakingService.CompleteMatch
 import com.scustoms.services.QueueService._
-import com.scustoms.services.{PlayerService, QueueService}
+import com.scustoms.services.{MatchService, PlayerService, QueueService}
 import com.typesafe.config.{Config, ConfigFactory}
 
 import scala.concurrent.Future
 
-class UserCommands(client: DiscordClient, queueService: QueueService, playerService: PlayerService) extends CommandController(client.requests) {
+class UserCommands(client: DiscordClient,
+                   queueService: QueueService,
+                   playerService: PlayerService,
+                   matchService: MatchService
+                  ) extends CommandController(client.requests) {
   implicit val c: DiscordClient = client
 
   val config: Config = ConfigFactory.load()
@@ -76,6 +81,28 @@ class UserCommands(client: DiscordClient, queueService: QueueService, playerServ
       }
     )
 
+  val history: NamedComplexCommand[Option[Int], NotUsed] = GuildCommand
+    .named(userCommandSymbols, Seq("history"))
+    .parsing[Option[Int]](MessageParser.optional)
+    .asyncOpt(implicit userCommandMessage => {
+      val historySize = userCommandMessage.parsed.map(c => math.min(100, math.max(c, 0))).getOrElse(10)
+      OptFuture.fromFuture(matchService.getLastN(historySize)).flatMap {
+        case Right(matches) =>
+          val matchStrings = matches.map {
+            case CompleteMatch(team1Won, team1, team2) =>
+              val team1String = team1.map(_.gameUsername.padTo(tablePadding, ' '))
+              val team2String = team2.map(_.gameUsername.padTo(tablePadding, ' '))
+              val winner = if (team1Won) "Team 1".padTo(tablePadding, ' ') else "Team 2".padTo(tablePadding, ' ')
+              f"$winner$team1String vs $team2String"
+          }
+          val header = s"${"Winner".padTo(tablePadding, ' ')}${"Team 1".padTo(tablePadding * 5, ' ')} vs ${"Team 2".padTo(tablePadding * 5, ' ')}"
+          val message = matchStrings.mkString(s"```$header\n", "\n", "```")
+          DiscordUtils.reactAndRespond(positiveMark, message)
+        case Left(err) =>
+          DiscordUtils.reactAndRespond(negativeMark, s"Error: ${err.toString}")
+      }
+    })
+
   val register: NamedComplexCommand[String, NotUsed] = GuildCommand
     .named(userCommandSymbols, Seq("register"))
     .parsing[String]
@@ -102,17 +129,19 @@ class UserCommands(client: DiscordClient, queueService: QueueService, playerServ
           Left(PlayerDoesNotExist)
         case true if queueService.contains(command.user.id) =>
           Left(PlayerAlreadyInQueue)
-        case true =>
-          QueueService
-            .parseRole(command.parsed.getOrElse("fill"))
+        case true if command.parsed.isDefined =>
+          command.parsed
+            .map(QueueService.parseRole)
             .toRight(ErrorParsingRole)
             .map(role => QueuedPlayer(command.user.id, role))
+        case true =>
+          Right(QueuedPlayer(command.user.id, None))
       }
 
       OptFuture.fromFuture(result).map {
         case Right(queuedPlayer) =>
           queueService.add(queuedPlayer)
-          val message = s"${command.user.mention} joined the queue (role: ${queuedPlayer.role}). Current queue size: ${queueService.length}"
+          val message = s"${command.user.mention} joined the queue (role: ${queuedPlayer.role.getOrElse("Fill")}). Current queue size: ${queueService.length}"
           DiscordUtils.reactAndRespond(positiveMark, message)
         case Left(error) =>
           DiscordUtils.reactAndRespond(negativeMark, error.message)
@@ -135,15 +164,17 @@ class UserCommands(client: DiscordClient, queueService: QueueService, playerServ
       OptFuture.fromFuture(queueService.extendedInfo).map {
         case Right(allPlayers) =>
             val niceString = allPlayers.map {
-              case ExtendedQueuedPlayer(_, role, dbPlayer) =>
+              case ExtendedQueuedPlayer(_, Some(role), dbPlayer) =>
                 val ratingStr = dbPlayer.niceString(role)
-                s"Username: ${dbPlayer.gameUsername}, queued role: ${QueueService.Fill}, $ratingStr"
+                s"Username: ${dbPlayer.gameUsername}, queued role: $role, $ratingStr"
+              case ExtendedQueuedPlayer(_, None, dbPlayer) =>
+                s"Username: ${dbPlayer.gameUsername}, queued role: Fill"
             }.mkString(s"```Queue (${allPlayers.length})\n", "\n", "```")
             m.textChannel.sendMessage(niceString)
         case Left(PlayerNotFound) =>
-          m.textChannel.sendMessage(s"Error: A player was not found in the database")
+          m.textChannel.sendMessage("Error: A player was not found in the database")
         case Left(_) =>
-          m.textChannel.sendMessage(s"An unknown error has occurred")
+          m.textChannel.sendMessage("An unknown error has occurred")
       }
     )
 
@@ -157,6 +188,12 @@ class UserCommands(client: DiscordClient, queueService: QueueService, playerServ
           s"""```
              |The bot will say hello to you. He's nice like that!
              |Usage: ${symbolStr}hello
+             |```""".stripMargin
+        case Some("history") =>
+          s"""```
+             |Look into the N latest matches.
+             |Usage: ${symbolStr}history <?N>
+             |N will be capped within the range [0, 100]
              |```""".stripMargin
         case Some("register") =>
           s"""```
@@ -172,7 +209,7 @@ class UserCommands(client: DiscordClient, queueService: QueueService, playerServ
           s"""```
              |Join the game queue
              |Usage: ${symbolStr}join <?role>
-             |(Possible roles: top, jungle, mid, bot, sup/support, fill/any/empty)
+             |(Possible roles: top, jungle, mid, bot, sup/support)
              |```""".stripMargin
         case Some("leave") =>
           s"""```
@@ -192,6 +229,7 @@ class UserCommands(client: DiscordClient, queueService: QueueService, playerServ
         case _ =>
           s"""```User command list:
              |Hello        The bot will say hello to you     (${symbolStr}hello)
+             |History      Look into the N latest matches    (${symbolStr}history <?N>)
              |Register     Register yourself in the database (${symbolStr}register <in_game_username>)
              |Info         Shows player information          (${symbolStr}info <?discord_mention>)
              |Join         Join the game queue               (${symbolStr}join <?role>)
@@ -205,5 +243,5 @@ class UserCommands(client: DiscordClient, queueService: QueueService, playerServ
       m.textChannel.sendMessage(helpText)
     })
 
-  val commandList = Seq(hello, register, info, join, leave, show, leaderboard, help)
+  val commandList = Seq(hello, history, register, info, join, leave, show, leaderboard, help)
 }

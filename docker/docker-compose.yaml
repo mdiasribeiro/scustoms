@@ -2,12 +2,13 @@ version: '3.7'
 
 services:
   scustoms:
-    image: scustoms:0.03
+    image: scustoms:latest
     restart: "no"
     volumes:
-      - "./database:/database"
+      - "../database:/opt/docker/database/"
     environment:
-      - DISCORD_SCUSTOMS_TOKEN=$DISCORD_SCUSTOMS_TOKEN
+      #- DISCORD_SCUSTOMS_TOKEN=$DISCORD_SCUSTOMS_TOKEN
+      - DISCORD_SCUSTOMS_TOKEN=OTE2MDQ0OTY2NDI4NTUzMjc4.YakbWw.v44SRosnWJ_KF2AcMUkHXiZ1WbQ
     networks:
       backend:
 

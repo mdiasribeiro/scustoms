@@ -9,10 +9,6 @@ import com.scustoms.database.keepers.{PlayerKeeper, PlayerStatisticsKeeper}
 
 import scala.concurrent.{ExecutionContext, Future}
 
-object PlayerService {
-
-}
-
 class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerStatisticsKeeper)(implicit ec: ExecutionContext) {
   def insert(discordId: UserId, discordUsername: String, gameUsername: String): Future[Either[DatabaseError, Int]] = {
     for {
@@ -84,4 +80,6 @@ class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerSt
       resolvedPlayerOpt <- Future.sequence(foundAllResult.map(resolvePlayer))
     } yield resolvedPlayerOpt.flatten
   }
+
+  def resetRating: Future[Int] = playerStatisticsKeeper.resetAll(RatingService.defaultGameInfo)
 }

@@ -4,16 +4,16 @@ import ackcord.syntax.TextChannelSyntax
 import ackcord.{APIMessage, ClientSettings, DiscordClient, OptFuture}
 import com.scustoms.database.keepers.{MatchKeeper, PlayerKeeper, PlayerStatisticsKeeper}
 import com.scustoms.database.{DatabaseManager, StaticReferences}
-import com.scustoms.services.{MatchmakingService, PlayerService, QueueService}
+import com.scustoms.services.{MatchService, MatchmakingService, PlayerService, QueueService}
 
 import scala.concurrent.duration._
-import scala.concurrent.{Await, ExecutionContextExecutor}
+import scala.concurrent.Await
 
 class ScustomsBot(discordToken: String) {
   val clientSettings: ClientSettings = ClientSettings(discordToken)
+  import clientSettings.executionContext
 
   val client: DiscordClient = Await.result(clientSettings.createClient(), 10.seconds)
-  implicit val ec: ExecutionContextExecutor = client.executionContext
 
   val databaseManager = new DatabaseManager
   //Await.result(databaseManager.clearDatabase(), 10.seconds)
@@ -26,9 +26,10 @@ class ScustomsBot(discordToken: String) {
   val playerService = new PlayerService(playerKeeper, playerStatisticsKeeper)
   val queueService = new QueueService(playerService)
   val matchmakingService = new MatchmakingService(matchKeeper)
+  val matchService = new MatchService(matchKeeper, playerKeeper)
 
-  val userCommands = new UserCommands(client, queueService, playerService)
-  val adminCommands = new AdminCommands(client, queueService, playerService, matchmakingService)
+  val userCommands = new UserCommands(client, queueService, playerService, matchService)
+  val adminCommands = new AdminCommands(client, queueService, playerService, matchmakingService, matchService)
   client.commands.bulkRunNamed(userCommands.commandList: _*)
   client.commands.bulkRunNamed(adminCommands.commandList: _*)
 

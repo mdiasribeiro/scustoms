@@ -27,7 +27,6 @@ object QueueService {
   final case object Mid extends Role
   final case object Bot extends Role
   final case object Support extends Role
-  final case object Fill extends Role
 
   def parseRole(role: String): Option[Role] = role.toLowerCase match {
     case "top"               => Some(Top)
@@ -35,12 +34,11 @@ object QueueService {
     case "mid"               => Some(Mid)
     case "bot"               => Some(Bot)
     case "sup" | "support"   => Some(Support)
-    case "fill" | "any"      => Some(Fill)
     case _                   => None
   }
 
-  case class QueuedPlayer(discordId: UserId, role: Role)
-  case class ExtendedQueuedPlayer(discordId: UserId, role: Role, playerWithStatistics: PlayerWithStatistics)
+  case class QueuedPlayer(discordId: UserId, role: Option[Role])
+  case class ExtendedQueuedPlayer(discordId: UserId, role: Option[Role], playerWithStatistics: PlayerWithStatistics)
 }
 
 class QueueService(playerService: PlayerService) {

@@ -27,8 +27,8 @@ object DiscordUtils {
     client.requestsHelper.runMany(react, respond)(command.cache).map(_ => ())
   }
 
-  def playersToStrings(team: Seq[MatchmakingService.MatchPlayer])(implicit c: CacheSnapshot): Seq[String] = {
-    team.map {
+  def playersToStrings(team: MatchmakingService.MatchTeam)(implicit c: CacheSnapshot): Seq[String] = {
+    team.seq.map {
       case MatchmakingService.MatchPlayer(discordId, role, dbPlayer) =>
         val mention = discordId.resolve.map(_.mention).getOrElse(dbPlayer.discordUsername)
         val ratingStr = dbPlayer.niceString(role)
@@ -36,9 +36,9 @@ object DiscordUtils {
     }
   }
 
-  def matchToString(m: MatchmakingService.Match, teamA: String, teamB: String)(implicit c: CacheSnapshot): String = {
-    val teamAPlayers = playersToStrings(m.teamA).mkString(s"$teamA\n", "\n", "")
-    val teamBPlayers = playersToStrings(m.teamB).mkString(s"$teamB\n", "\n", "")
+  def ongoingMatchToString(m: MatchmakingService.OngoingMatch, teamA: String, teamB: String)(implicit c: CacheSnapshot): String = {
+    val teamAPlayers = playersToStrings(m.team1).mkString(s"$teamA\n", "\n", "")
+    val teamBPlayers = playersToStrings(m.team2).mkString(s"$teamB\n", "\n", "")
     f"```Match probability of draw: ${m.quality}%1.2f\n$teamAPlayers\n$teamBPlayers```"
   }
 }
