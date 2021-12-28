@@ -3,7 +3,6 @@ name := "scustoms"
 version := "latest"
 
 scalaVersion := "2.13.7"
-//val AkkaVersion = "2.6.17"
 
 resolvers += Resolver.JCenterRepository
 
@@ -18,12 +17,10 @@ libraryDependencies ++= Seq(
 
 Compile / mainClass := Some("com.scustoms.Main")
 
-//enablePlugins(AshScriptPlugin)
 enablePlugins(JavaAppPackaging)
 enablePlugins(DockerPlugin)
 
 import NativePackagerHelper._
-import scala.sys.process._
 
 Universal / mappings ++= contentOf("src/main/resources")
 Docker / maintainer := "mdiasribeiro"

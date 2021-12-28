@@ -5,9 +5,10 @@ import ackcord.data.UserId
 import ackcord.requests.CreateReaction
 import ackcord.syntax.TextChannelSyntax
 import ackcord.{CacheSnapshot, DiscordClient, OptFuture}
-import com.scustoms.services.MatchmakingService
+import com.scustoms.services.MatchService
 
 import scala.concurrent.ExecutionContext
+import com.scustoms.Utils.StringImprovements
 
 object DiscordUtils {
   def getUserIdFromMention(mention: String): Option[UserId] = {
@@ -27,18 +28,25 @@ object DiscordUtils {
     client.requestsHelper.runMany(react, respond)(command.cache).map(_ => ())
   }
 
-  def playersToStrings(team: MatchmakingService.MatchTeam)(implicit c: CacheSnapshot): Seq[String] = {
+  def playersToStrings(team: MatchService.MatchTeam, columnSize: Int)(implicit c: CacheSnapshot): Seq[String] = {
     team.seq.map {
-      case MatchmakingService.MatchPlayer(discordId, role, dbPlayer) =>
-        val mention = discordId.resolve.map(_.mention).getOrElse(dbPlayer.discordUsername)
-        val ratingStr = dbPlayer.niceString(role)
-        s"$mention: ${dbPlayer.gameUsername}, role: $role, $ratingStr"
+      case MatchService.MatchPlayer(role, player) =>
+        val ratingStr = player.niceString(Some(role))
+        s"${player.gameUsername.pad(columnSize)}${role.toString.pad(columnSize)}${ratingStr.pad(columnSize)}"
     }
   }
 
-  def ongoingMatchToString(m: MatchmakingService.OngoingMatch, teamA: String, teamB: String)(implicit c: CacheSnapshot): String = {
-    val teamAPlayers = playersToStrings(m.team1).mkString(s"$teamA\n", "\n", "")
-    val teamBPlayers = playersToStrings(m.team2).mkString(s"$teamB\n", "\n", "")
-    f"```Match probability of draw: ${m.quality}%1.2f\n$teamAPlayers\n$teamBPlayers```"
+  def ongoingMatchToString(m: MatchService.OngoingMatch, teamA: String, teamB: String, columnSize: Int)(implicit c: CacheSnapshot): String = {
+    val header = s"${"Username".pad(columnSize)}${"Role".pad(columnSize)}${"Rating".pad(columnSize)}"
+    val teamAPlayers = playersToStrings(m.team1, columnSize).mkString(s"\n$teamA\n$header\n", "\n", "")
+    val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n$teamB\n$header\n", "\n", "")
+    val quality = f"${m.quality * 100}%3.02f"
+    s"```Match probability of draw: $quality%\n$teamAPlayers\n$teamBPlayers```"
+  }
+
+  def parseWinningTeamA(parsed: Int): Option[Boolean] = parsed match {
+    case 1 => Some(true)
+    case 2 => Some(false)
+    case _ => None
   }
 }

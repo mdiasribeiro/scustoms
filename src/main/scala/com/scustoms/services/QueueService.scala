@@ -1,11 +1,9 @@
 package com.scustoms.services
 
 import ackcord.data.UserId
-import com.scustoms.database.DatabaseManager.DatabaseError
-import com.scustoms.database.keepers.PlayerKeeper.PlayerWithStatistics
-import com.scustoms.services.QueueService.{ExtendedQueuedPlayer, QueuedPlayer}
-
-import scala.concurrent.{ExecutionContext, Future}
+import com.scustoms.services.MatchService.MatchRole
+import com.scustoms.services.PlayerService.PlayerWithStatistics
+import com.scustoms.services.QueueService.QueuedPlayer
 
 object QueueService {
   sealed trait QueueError {
@@ -20,66 +18,83 @@ object QueueService {
   final case object PlayerAlreadyInQueue extends QueueError {
     override def message: String = "Player is already in the queue."
   }
+  final case object PlayerAlreadyInMatch extends QueueError {
+    override def message: String = "Player is already in a match."
+  }
 
-  sealed trait Role
-  final case object Top extends Role
-  final case object Jungle extends Role
-  final case object Mid extends Role
-  final case object Bot extends Role
-  final case object Support extends Role
+  sealed trait QueueRole {
+    def toMatchRole: Option[MatchRole]
+  }
+  final case object Top extends QueueRole { override def toMatchRole: Option[MatchRole] = Some(MatchService.Top) }
+  final case object Jungle extends QueueRole { override def toMatchRole: Option[MatchRole] = Some(MatchService.Jungle) }
+  final case object Mid extends QueueRole { override def toMatchRole: Option[MatchRole] = Some(MatchService.Mid) }
+  final case object Bot extends QueueRole { override def toMatchRole: Option[MatchRole] = Some(MatchService.Bot) }
+  final case object Support extends QueueRole { override def toMatchRole: Option[MatchRole] = Some(MatchService.Support) }
+  final case object Fill extends QueueRole { override def toMatchRole: Option[MatchRole] = None }
 
-  def parseRole(role: String): Option[Role] = role.toLowerCase match {
+  def parseRole(role: String): Option[QueueRole] = role.toLowerCase match {
     case "top"               => Some(Top)
     case "jungle"            => Some(Jungle)
     case "mid"               => Some(Mid)
     case "bot"               => Some(Bot)
     case "sup" | "support"   => Some(Support)
+    case "fill" | "any"      => Some(Fill)
     case _                   => None
   }
 
-  case class QueuedPlayer(discordId: UserId, role: Option[Role])
-  case class ExtendedQueuedPlayer(discordId: UserId, role: Option[Role], playerWithStatistics: PlayerWithStatistics)
+  case class QueuedPlayer(role: QueueRole, stats: PlayerWithStatistics) {
+    def discordId: UserId = stats.discordId
+  }
 }
 
-class QueueService(playerService: PlayerService) {
+class QueueService {
 
   private var queue: Seq[QueuedPlayer] = Seq.empty
+  private var watchers: Seq[UserId] = Seq.empty
 
-  def get: Seq[QueuedPlayer] = queue
+  def getQueue: Seq[QueuedPlayer] = queue
 
-  def add(player: QueuedPlayer): Boolean =
-    if (this.contains(player.discordId)) {
+  def getWatchers: Seq[UserId] = watchers
+
+  def addPlayer(player: QueuedPlayer): Boolean =
+    if (this.contains(player.stats.discordId)) {
       false
     } else {
       queue = queue.appended(player)
       true
     }
 
+  def addWatcher(userId: UserId): Boolean =
+    if (this.contains(userId)) {
+      false
+    } else {
+      watchers = watchers.appended(userId)
+      true
+    }
+
   def remove(playerId: UserId): Boolean =
     if (this.contains(playerId)) {
-      queue = queue.filterNot(_.discordId == playerId)
+      queue = queue.filterNot(_.stats.discordId == playerId)
+      watchers = watchers.filterNot(_ == playerId)
       true
     } else {
       false
     }
 
-  def contains(playerId: UserId): Boolean = queue.exists(_.discordId == playerId)
+  def containsPlayer(playerId: UserId): Boolean = queue.exists(_.stats.discordId == playerId)
 
-  def clear(): Unit = queue = Seq.empty
+  def containsWatcher(watcherId: UserId): Boolean = watchers.contains(watcherId)
+
+  def contains(userId: UserId): Boolean = containsPlayer(userId) || containsWatcher(userId)
+
+  def clearPlayers(): Unit = queue = Seq.empty
+
+  def clearWatchers(): Unit = watchers = Seq.empty
+
+  def clear(): Unit = {
+    clearPlayers()
+    clearWatchers()
+  }
 
   def length: Int = queue.length
-
-  def extendedInfo(implicit ec: ExecutionContext): Future[Either[DatabaseError, Seq[ExtendedQueuedPlayer]]] = {
-    val currentPlayers = queue
-    playerService
-      .findAll(currentPlayers.map(_.discordId))
-      .map(_.map(allPlayers => {
-        currentPlayers
-          .sortBy(_.discordId.toUnsignedLong)
-          .zip(allPlayers.sortBy(_.discordId.toUnsignedLong))
-          .map {
-            case (queuedPlayer, dbPlayer) => ExtendedQueuedPlayer(queuedPlayer.discordId, queuedPlayer.role, dbPlayer)
-          }
-      }))
-  }
 }

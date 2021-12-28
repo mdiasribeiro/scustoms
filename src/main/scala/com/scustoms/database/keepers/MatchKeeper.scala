@@ -2,43 +2,36 @@ package com.scustoms.database.keepers
 
 import ackcord.data.UserId
 import com.scustoms.database.DatabaseManager
-import com.scustoms.database.DatabaseManager.DatabaseError
 import slick.jdbc.SQLiteProfile.api._
 import slick.lifted.ProvenShape
 
 import scala.concurrent.{ExecutionContext, Future}
 
 object MatchKeeper {
-  sealed trait MatchDatabaseError extends DatabaseError
-  final case object WrongTeamSize extends MatchDatabaseError
-
   type StoredMatchTableTuple = (Long, Long, Long, Long, Long, Long, Long, Long, Long, Long, Long, Boolean)
+
+  case class StoredMatchTeam(topId: UserId, jungleId: UserId, midId: UserId, botId: UserId, supportId: UserId)
 
   object StoredMatch {
     def fromTuple(t: StoredMatchTableTuple): StoredMatch =
       StoredMatch(t._1,
-        Seq(UserId(t._2), UserId(t._3), UserId(t._4), UserId(t._5), UserId(t._6)),
-        Seq(UserId(t._7), UserId(t._8), UserId(t._9), UserId(t._10), UserId(t._11)),
+        StoredMatchTeam(UserId(t._2), UserId(t._3), UserId(t._4), UserId(t._5), UserId(t._6)),
+        StoredMatchTeam(UserId(t._7), UserId(t._8), UserId(t._9), UserId(t._10), UserId(t._11)),
         t._12
       )
   }
 
-  case class StoredMatch(id: Long, teamA: Seq[UserId], teamB: Seq[UserId], team1Won: Boolean) {
-    require(teamA.length == 5 && teamB.length == 5, "Match teams require exactly 5 players each")
-
-    val Seq(topTeam1, jungleTeam1, midTeam1, botTeam1, supportTeam1) = teamA
-    val Seq(topTeam2, jungleTeam2, midTeam2, botTeam2, supportTeam2) = teamB
-
+  case class StoredMatch(id: Long, teamA: StoredMatchTeam, teamB: StoredMatchTeam, team1Won: Boolean) {
     def * : StoredMatchTableTuple = {
-      (id, topTeam1.toUnsignedLong, jungleTeam1.toUnsignedLong, midTeam1.toUnsignedLong,
-        botTeam1.toUnsignedLong, supportTeam1.toUnsignedLong, topTeam2.toUnsignedLong,
-        jungleTeam2.toUnsignedLong, midTeam2.toUnsignedLong, botTeam2.toUnsignedLong,
-        supportTeam2.toUnsignedLong, team1Won
+      (id, teamA.topId.toUnsignedLong, teamA.jungleId.toUnsignedLong, teamA.midId.toUnsignedLong,
+        teamA.botId.toUnsignedLong, teamA.supportId.toUnsignedLong, teamB.topId.toUnsignedLong,
+        teamB.jungleId.toUnsignedLong, teamB.midId.toUnsignedLong, teamB.botId.toUnsignedLong,
+        teamB.supportId.toUnsignedLong, team1Won
       )
     }
   }
 
-  class StoredMatches(tag: Tag) extends Table[StoredMatchTableTuple](tag, "storedMatches") {
+  class MatchTableSchema(tag: Tag) extends Table[StoredMatchTableTuple](tag, "storedMatches") {
     def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
     def topTeam1: Rep[Long] = column[Long]("topTeam1")
     def jungleTeam1: Rep[Long] = column[Long]("jungleTeam1")
@@ -56,7 +49,7 @@ object MatchKeeper {
         midTeam2, botTeam2, supportTeam2, team1Won)
   }
 
-  val storedMatchesTable: TableQuery[StoredMatches] = TableQuery[StoredMatches]
+  val storedMatchesTable: TableQuery[MatchTableSchema] = TableQuery[MatchTableSchema]
 }
 
 class MatchKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContext) {

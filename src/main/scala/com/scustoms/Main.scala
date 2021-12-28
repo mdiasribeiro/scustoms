@@ -4,8 +4,6 @@ import com.scustoms.bot.ScustomsBot
 import com.scustoms.database.DatabaseManager
 import com.typesafe.config.ConfigFactory
 
-import scala.concurrent.Promise
-
 object Main extends App {
   val config = ConfigFactory.load()
   val discordToken = config.getString("scustoms.discordToken")
@@ -21,7 +19,7 @@ object Main extends App {
       System.exit(0)
     } else {
       try {
-        new ScustomsBot(discordToken)
+        new ScustomsBot(discordToken, config)
       } catch {
         case err: Exception =>
           println(s"Start-up failure: ${err.getMessage}")

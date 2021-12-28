@@ -1,6 +1,6 @@
 package com.scustoms.trueskill
 
-import com.scustoms.services.MatchmakingService.MatchPlayer
+import com.scustoms.services.MatchService.MatchPlayer
 import com.scustoms.trueskill.TrueskillUtils.square
 import de.gesundkrank.jskills.trueskill.{DrawMargin, TruncatedGaussianCorrectionFunctions}
 import de.gesundkrank.jskills.{GameInfo, Rating}
@@ -27,22 +27,22 @@ object TwoPlayerCalculator {
 
     val v = TruncatedGaussianCorrectionFunctions.vExceedsMargin(meanDelta, drawMargin, c)
     val w = TruncatedGaussianCorrectionFunctions.wExceedsMargin(meanDelta, drawMargin, c)
-    val rankMultiplier = if (player1Won) 1 else -1
 
-    def calculateNewRating(previousPlayerRating: Rating): Rating = {
+    def calculateNewRating(previousPlayerRating: Rating, won: Boolean): Rating = {
       val meanMultiplier = (square(previousPlayerRating.getStandardDeviation) + square(gameInfo.getDynamicsFactor)) / c
 
       val varianceWithDynamics = square(previousPlayerRating.getStandardDeviation) + square(gameInfo.getDynamicsFactor)
       val stdDevMultiplier = varianceWithDynamics / square(c)
 
+      val rankMultiplier = if (won) 1 else -1
       val newMean = previousPlayerRating.getMean + (rankMultiplier * meanMultiplier * v)
       val newStdDev = math.sqrt(varianceWithDynamics * (1 - w * stdDevMultiplier))
 
       new Rating(newMean, newStdDev)
     }
 
-    val updatedPlayer1 = player1.updatedRating(calculateNewRating(player1Rating))
-    val updatedPlayer2 = player2.updatedRating(calculateNewRating(player2Rating))
+    val updatedPlayer1 = player1.updatedRating(calculateNewRating(player1Rating, player1Won), player1Won)
+    val updatedPlayer2 = player2.updatedRating(calculateNewRating(player2Rating, !player1Won), !player1Won)
     (updatedPlayer1, updatedPlayer2)
   }
 

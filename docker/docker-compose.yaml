@@ -7,8 +7,7 @@ services:
     volumes:
       - "../database:/opt/docker/database/"
     environment:
-      #- DISCORD_SCUSTOMS_TOKEN=$DISCORD_SCUSTOMS_TOKEN
-      - DISCORD_SCUSTOMS_TOKEN=OTE2MDQ0OTY2NDI4NTUzMjc4.YakbWw.v44SRosnWJ_KF2AcMUkHXiZ1WbQ
+      - DISCORD_SCUSTOMS_TOKEN=$DISCORD_SCUSTOMS_TOKEN
     networks:
       backend:
 

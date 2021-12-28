@@ -19,7 +19,9 @@ class DatabaseManager {
   def clearDatabase(): Future[Unit] = {
     runTransaction {
       DBIO.seq(
-        PlayerKeeper.playersTable.schema.dropIfExists
+        PlayerKeeper.playersTable.schema.dropIfExists,
+        PlayerStatisticsKeeper.playersStatisticsTable.schema.dropIfExists,
+        MatchKeeper.storedMatchesTable.schema.dropIfExists
       )
     }
   }

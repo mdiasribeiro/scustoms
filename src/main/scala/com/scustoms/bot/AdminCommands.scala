@@ -7,28 +7,26 @@ import ackcord.syntax.TextChannelSyntax
 import ackcord.{DiscordClient, JsonSome, OptFuture}
 import akka.NotUsed
 import Emojis.{negativeMark, positiveMark}
-import com.scustoms.Utils
-import com.scustoms.database.DatabaseManager.DatabaseError
 import com.scustoms.database.keepers.PlayerKeeper
 import com.scustoms.database.StaticReferences
-import com.scustoms.database.keepers.PlayerKeeper.PlayerNotFound
-import com.scustoms.services.MatchmakingService.{CompleteMatch, MatchPlayer, MatchTeam, OngoingMatch}
+import com.scustoms.database.keepers.MatchKeeper.{StoredMatch, StoredMatchTeam}
+import com.scustoms.services.MatchService.OngoingMatch
 import com.scustoms.services.QueueService.QueuedPlayer
-import com.scustoms.services.{MatchService, MatchmakingService, PlayerService, QueueService, RatingService}
-import com.scustoms.trueskill.TwoTeamCalculator
-import com.typesafe.config.{Config, ConfigFactory}
+import com.scustoms.services.{MatchService, PlayerService, QueueService}
+import com.scustoms.trueskill.RatingUtils
+import com.typesafe.config.Config
 
-import scala.concurrent.Future
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.{Await, Future}
 
-class AdminCommands(client: DiscordClient,
+class AdminCommands(config: Config,
                     queueService: QueueService,
                     playerService: PlayerService,
-                    matchmakingService: MatchmakingService,
                     matchService: MatchService
-                   ) extends CommandController(client.requests) {
-  implicit val c: DiscordClient = client
+                   )(implicit client: DiscordClient) extends CommandController(client.requests) {
 
-  val config: Config = ConfigFactory.load()
+  import com.scustoms.Utils.StringImprovements
+
   val adminCommandSymbols = Seq(config.getString("scustoms.adminCommandSymbol"))
   val tablePadding: Int = config.getInt("scustoms.tablePadding")
 
@@ -41,20 +39,26 @@ class AdminCommands(client: DiscordClient,
       DiscordUtils.reactAndRespond(positiveMark, "Queue has been cleared")
     })
 
-  final val AddString = "AddPlayer"
-  val add: NamedComplexCommand[(String, Option[String]), NotUsed] = GuildCommand
+  final val AddPlayerString = "addPlayer"
+  val addPlayer: NamedComplexCommand[(String, Option[String]), NotUsed] = GuildCommand
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
-    .named(adminCommandSymbols, Seq(AddString))
+    .named(adminCommandSymbols, Seq(AddPlayerString))
     .parsing[(String, Option[String])](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit command => {
       val parsedUserId = DiscordUtils.getUserIdFromMention(command.parsed._1)
-      val parsedRole = command.parsed._2.map(QueueService.parseRole)
+      val parsedRole = command.parsed._2.map(QueueService.parseRole).getOrElse(Some(QueueService.Fill))
       (parsedUserId, parsedRole) match {
+        case (Some(userId), _) if queueService.contains(userId) =>
+          DiscordUtils.reactAndRespond(negativeMark, s"${command.parsed._1} is already in the queue")
+        case (Some(userId), _) if matchService.contains(userId) =>
+          DiscordUtils.reactAndRespond(negativeMark, s"${command.parsed._1} is already in a match")
         case (Some(userId), Some(role)) =>
-          if (queueService.add(QueueService.QueuedPlayer(userId, role))) {
-            DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed._1} was added to the queue with role: $role")
-          } else {
-            DiscordUtils.reactAndRespond(negativeMark, s"${command.parsed._1} is already in the queue")
+          OptFuture.fromFuture(playerService.find(userId)).map {
+            case Some(player) =>
+              queueService.addPlayer(QueueService.QueuedPlayer(role, player))
+              DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed._1} was added to the queue with role: $role")
+            case None =>
+              DiscordUtils.reactAndRespond(negativeMark, s"${command.parsed._1} could not be found. Make sure he is registered.")
           }
         case (Some(_), None) =>
           DiscordUtils.reactAndRespond(negativeMark, "Player role could not be parsed")
@@ -63,7 +67,7 @@ class AdminCommands(client: DiscordClient,
       }
     })
 
-  final val RemoveString = "RemovePlayer"
+  final val RemoveString = "removePlayer"
   val remove: NamedComplexCommand[String, NotUsed] = GuildCommand
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
     .named(adminCommandSymbols, Seq(RemoveString))
@@ -84,26 +88,19 @@ class AdminCommands(client: DiscordClient,
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
     .named(adminCommandSymbols, Seq(StartString))
     .asyncOpt(implicit m => {
-      matchmakingService.ongoingMatch match {
+      matchService.ongoingMatch match {
         case Some(_) =>
           DiscordUtils.reactAndRespond(negativeMark, s"A match is already on-going. Finish that one before starting another.")
         case None =>
-          OptFuture.fromFuture(queueService.extendedInfo).map{
-            case Right(queuedPlayers) =>
-              try {
-                val startingMatch = matchmakingService.calculateRoleMatch(queuedPlayers)
-                matchmakingService.ongoingMatch = Some(startingMatch)
-                queueService.clear()
-                val msg = DiscordUtils.ongoingMatchToString(startingMatch, "TEAM GEMESES", "TEAM SHIKISHOKU")
-                client.requestsHelper.run(m.textChannel.sendMessage(msg)).map(_ => ())
-              } catch {
-                case err: Exception =>
-                  DiscordUtils.reactAndRespond(negativeMark, s"Error: ${err.getMessage}")
-              }
-            case Left(PlayerNotFound) =>
-              m.textChannel.sendMessage(s"Error: A player was not found in the database")
-            case Left(_) =>
-              m.textChannel.sendMessage(s"An unknown error has occurred")
+          try {
+            val startingMatch = RatingUtils.calculateRoleMatch(queueService.getQueue)
+            matchService.ongoingMatch = Some(startingMatch)
+            queueService.clear()
+            val msg = DiscordUtils.ongoingMatchToString(startingMatch, "TEAM 1", "TEAM 2", tablePadding)
+            client.requestsHelper.run(m.textChannel.sendMessage(msg)).map(_ => ())
+          } catch {
+            case err: Exception =>
+              DiscordUtils.reactAndRespond(negativeMark, s"Error: ${err.getMessage}")
           }
       }
     })
@@ -113,11 +110,11 @@ class AdminCommands(client: DiscordClient,
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
     .named(adminCommandSymbols, Seq(AbortString))
     .asyncOpt(implicit m => {
-      matchmakingService.ongoingMatch match {
+      matchService.ongoingMatch match {
         case Some(ongoingMatch) =>
-          matchmakingService.ongoingMatch = None
-          ongoingMatch.team1.seq.foreach(p => queueService.add(QueuedPlayer(p.discordId, Some(p.role))))
-          ongoingMatch.team2.seq.foreach(p => queueService.add(QueuedPlayer(p.discordId, Some(p.role))))
+          matchService.ongoingMatch = None
+          ongoingMatch.team1.seq.foreach(p => queueService.addPlayer(QueuedPlayer(p.role.toQueueRole, p.state)))
+          ongoingMatch.team2.seq.foreach(p => queueService.addPlayer(QueuedPlayer(p.role.toQueueRole, p.state)))
           DiscordUtils.reactAndRespond(positiveMark, s"Match aborted. Players were placed back in the queue.")
         case None =>
           DiscordUtils.reactAndRespond(negativeMark, s"There is no on-going match to abort.")
@@ -176,21 +173,18 @@ class AdminCommands(client: DiscordClient,
     .named(adminCommandSymbols, Seq(WinnerString))
     .parsing[Int]
     .asyncOpt(implicit m => {
-      val winningTeam = m.parsed match {
-        case 1 => Some(true)
-        case 2 => Some(false)
-        case _ => None
-      }
-      (winningTeam, matchmakingService.ongoingMatch) match {
+      val winningTeam = DiscordUtils.parseWinningTeamA(m.parsed)
+      (winningTeam, matchService.ongoingMatch) match {
         case (_, None) =>
           DiscordUtils.reactAndRespond(negativeMark, s"There is no ongoing match.")
         case (None, _) =>
-          DiscordUtils.reactAndRespond(negativeMark, s"Team number is not valid. Must be 1 or 2.")
+          DiscordUtils.reactAndRespond(negativeMark, "Team number is not valid. Must be 1 or 2.")
         case (Some(team1Won), Some(ongoingMatch)) =>
-          matchmakingService.ongoingMatch = None
-          val completeMatch = RatingService.calculate(ongoingMatch, team1Won)
-          matchService.insert(completeMatch)
-          DiscordUtils.reactAndRespond(positiveMark, s"Game result has been saved and player ratings updated.")
+          matchService.ongoingMatch = None
+          val completeMatch = RatingUtils.calculate(ongoingMatch, team1Won)
+          val update = matchService.insertAndUpdate(completeMatch)
+          OptFuture.fromFuture(update)
+            .map(_ => DiscordUtils.reactAndRespond(positiveMark, "Game result has been saved and player ratings updated."))
       }
     })
 
@@ -208,68 +202,123 @@ class AdminCommands(client: DiscordClient,
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
     .named(adminCommandSymbols, Seq(ReprocessString))
     .asyncOpt(implicit m => {
-
-      def completeMatchToOngoingMatch(m: CompleteMatch): Future[Either[DatabaseError, OngoingMatch]] = {
-        for {
-          resolvedTeamA <- Future.sequence(m.teamA.map(playerService.resolvePlayer))
-          resolvedTeamB <- Future.sequence(m.teamB.map(playerService.resolvePlayer))
-        } yield {
-          if (resolvedTeamA.contains(None) || resolvedTeamB.contains(None)) {
-            Left(PlayerKeeper.PlayerNotFound)
-          } else {
-            val teamA = MatchTeam.fromPlayersWithStatistics(resolvedTeamA.flatten)
-            val teamB = MatchTeam.fromPlayersWithStatistics(resolvedTeamB.flatten)
-            val score = TwoTeamCalculator.calculateMatchQuality(RatingService.defaultGameInfo, teamA, teamB)
-            Right(OngoingMatch(score, teamA, teamB))
-          }
-        }
-      }
-
-      def convertMatches(m: Seq[CompleteMatch]): Future[Either[DatabaseError, Seq[OngoingMatch]]] = {
-        for {
-          seqProcessedMatches <- Future.sequence(m.map(completeMatchToOngoingMatch))
-        } yield Utils.sequenceEither(seqProcessedMatches)
-      }
-
       val limit = 100
       var offset = 0
       var hasMore = true
+      Await.result(playerService.resetRating, 10.seconds)
+      println("Ratings have been reset.")
       while (hasMore) {
-        for {
-          batchEither <- matchService.get(limit, offset)
-          batch <- batchEither
-          stillHasMore = batch.length >= limit
-          newOffset = offset + batch.length
-          convertedEither <- convertMatches(batch)
-          ongoingMatches <- convertedEither
-        } yield {
-          offset = newOffset
-          hasMore = stillHasMore
-          ongoingMatches.map(RatingService.calculate(_, true))
-        }
+        matchService
+          .getUnresolved(limit, offset)
+          .map(batch => {
+            println(s"Processing a new match batch of ${batch.length} matches...")
+            hasMore = batch.length >= limit
+            offset = offset + batch.length
+            batch.foreach(unresolvedMatch => {
+              val processedMatch = matchService.resolveMatch(unresolvedMatch).flatMap {
+                case Some(resolvedMatch) =>
+                  val ongoingMatch = OngoingMatch.fromResolvedMatch(resolvedMatch)
+                  val completeMatch = RatingUtils.calculate(ongoingMatch, resolvedMatch.team1Won)
+                  matchService.updateRatings(completeMatch)
+                case None =>
+                  Future.successful(())
+              }
+              Await.result(processedMatch, 10.seconds)
+            })
+            println(s"Batch processed.")
+          })
+      }
+      DiscordUtils.reactAndRespond(positiveMark, s"Match re-processing complete!")
+    })
 
+  final val AddMatchString = "addMatch"
+  case class AddMatchParams(t1: String, j1: String, m1: String, b1: String, s1: String,
+                            t2: String, j2: String, m2: String, b2: String, s2: String, winningTeam: Int)
+  def resolveAddMatch(m: AddMatchParams): Option[StoredMatch] =
+    for {
+      t1 <- DiscordUtils.getUserIdFromMention(m.t1)
+      j1 <- DiscordUtils.getUserIdFromMention(m.j1)
+      m1 <- DiscordUtils.getUserIdFromMention(m.m1)
+      b1 <- DiscordUtils.getUserIdFromMention(m.b1)
+      s1 <- DiscordUtils.getUserIdFromMention(m.s1)
+      t2 <- DiscordUtils.getUserIdFromMention(m.t2)
+      j2 <- DiscordUtils.getUserIdFromMention(m.j2)
+      m2 <- DiscordUtils.getUserIdFromMention(m.m2)
+      b2 <- DiscordUtils.getUserIdFromMention(m.b2)
+      s2 <- DiscordUtils.getUserIdFromMention(m.s2)
+      teamAWon <- DiscordUtils.parseWinningTeamA(m.winningTeam)
+    } yield StoredMatch(
+      0L,
+      StoredMatchTeam(t1, j1, m1, b1, s1),
+      StoredMatchTeam(t2, j2, m2, b2, s2),
+      teamAWon
+    )
+
+  val addMatch: NamedComplexCommand[AddMatchParams, NotUsed] = GuildCommand
+    .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
+    .named(adminCommandSymbols, Seq(AddMatchString))
+    .parsing[AddMatchParams](MessageParser.Auto.deriveParser)
+    .asyncOpt(implicit m => {
+      resolveAddMatch(m.parsed) match {
+        case Some(params) =>
+          OptFuture.fromFuture(matchService.resolveMatch(params)).map {
+            case Some(resolvedMatch) =>
+              val ongoingMatch = OngoingMatch.fromResolvedMatch(resolvedMatch)
+              val completeMatch = RatingUtils.calculate(ongoingMatch, resolvedMatch.team1Won)
+              matchService
+                .insertAndUpdate(completeMatch)
+                .map(_ => DiscordUtils.reactAndRespond(positiveMark, "Game result has been saved and player ratings updated."))
+            case None =>
+              DiscordUtils.reactAndRespond(negativeMark, "A player could not be resolved, make sure everyone is registered.")
+          }
+        case None =>
+          DiscordUtils.reactAndRespond(negativeMark, "Error parsing parameters, make sure mentions and teamAWon value are correct.")
       }
     })
 
-  final val RelocateString = "relocateVoice"
-  val relocate: NamedCommand[NotUsed] = GuildCommand
+  final val RelocateRoomsString = "relocateRooms"
+  val relocateRooms: NamedCommand[NotUsed] = GuildCommand
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
-    .named(adminCommandSymbols, Seq(RelocateString))
+    .named(adminCommandSymbols, Seq(RelocateRoomsString))
     .asyncOpt(implicit m => {
-      matchmakingService.ongoingMatch match {
+      matchService.ongoingMatch match {
         case Some(ongoingMatch) =>
           val moveTeamA = ongoingMatch.team1.seq.map(player => {
             val newData = ModifyGuildMemberData(channelId = JsonSome(StaticReferences.teamAChannel))
-            ModifyGuildMember(m.guild.id, player.discordId, newData)
+            ModifyGuildMember(m.guild.id, player.state.discordId, newData)
           })
           val moveTeamB = ongoingMatch.team2.seq.map(player => {
             val newData = ModifyGuildMemberData(channelId = JsonSome(StaticReferences.teamBChannel))
-            ModifyGuildMember(m.guild.id, player.discordId, newData)
+            ModifyGuildMember(m.guild.id, player.state.discordId, newData)
           })
-          val allPlayers = moveTeamA ++ moveTeamB
+          val moveWatchers = queueService.getWatchers.map(watcher => {
+            val newData = ModifyGuildMemberData(channelId = JsonSome(StaticReferences.teamAChannel))
+            ModifyGuildMember(m.guild.id, watcher, newData)
+          })
+          val allPlayers = moveTeamA ++ moveTeamB ++ moveWatchers
           client.requestsHelper.runMany(allPlayers: _*).map(_ => ())
         case None =>
-          DiscordUtils.reactAndRespond(negativeMark, s"There is no ongoing match")
+          DiscordUtils.reactAndRespond(negativeMark, "There is no ongoing match")
+      }
+    })
+
+  final val RelocateLobbyString = "relocateLobby"
+  val relocateLobby: NamedCommand[NotUsed] = GuildCommand
+    .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
+    .named(adminCommandSymbols, Seq(RelocateLobbyString))
+    .asyncOpt(implicit m => {
+      matchService.ongoingMatch match {
+        case Some(ongoingMatch) =>
+          val allMembers = queueService.getWatchers ++
+            ongoingMatch.team1.seq.map(_.state.discordId) ++
+            ongoingMatch.team2.seq.map(_.state.discordId)
+          val moveTeams = allMembers.map(playerId => {
+            val newData = ModifyGuildMemberData(channelId = JsonSome(StaticReferences.lobbyChannel))
+            ModifyGuildMember(m.guild.id, playerId, newData)
+          })
+          client.requestsHelper.runMany(moveTeams: _*).map(_ => ())
+        case None =>
+          DiscordUtils.reactAndRespond(negativeMark, "There is no ongoing match")
       }
     })
 
@@ -279,16 +328,16 @@ class AdminCommands(client: DiscordClient,
     .parsing[Option[String]](MessageParser.optional)
     .withRequest(m => {
       val symbolStr = adminCommandSymbols.head
-      val helpText = m.parsed.map(_.toLowerCase) match {
+      val helpText = m.parsed match {
         case Some(ClearString) =>
           s"""```
              |Clear the queue
              |Usage: $symbolStr$ClearString
              |```""".stripMargin
-        case Some(AddString) =>
+        case Some(AddPlayerString) =>
           s"""```
              |Add the target player to the queue
-             |Usage: $symbolStr$AddString <discord_mention> <?role>
+             |Usage: $symbolStr$AddPlayerString <discord_mention> <?role>
              |(Possible roles: top, jungle, mid, bot, sup/support, fill/any/empty)
              |```""".stripMargin
         case Some(RemoveString) =>
@@ -327,37 +376,59 @@ class AdminCommands(client: DiscordClient,
              |Reset all players rating to default values
              |Usage: $symbolStr$ResetString
              |```""".stripMargin
-        case Some(RelocateString) =>
+        case Some(ReprocessString) =>
+          s"""```
+             |Resets the ratings and reprocess all matches in the database
+             |Usage: $symbolStr$ReprocessString
+             |```""".stripMargin
+        case Some(AddMatchString) =>
+          s"""```
+             |Adds a match to the database
+             |Usage: $symbolStr$AddMatchString <top_1_mention> ... <top_2_mention> <winning_team>
+             |```""".stripMargin
+        case Some(RelocateRoomsString) =>
           s"""```
              |Move match players to the right voice rooms
-             |Usage: $symbolStr$RelocateString
+             |Usage: $symbolStr$RelocateRoomsString
+             |```""".stripMargin
+        case Some(RelocateLobbyString) =>
+          s"""```
+             |Move match players to the lobby voice room
+             |Usage: $symbolStr$RelocateLobbyString
              |```""".stripMargin
         case _ =>
-          val clear = s"$symbolStr$ClearString".padTo(tablePadding, ' ')
-          val add = s"$symbolStr$AddString".padTo(tablePadding, ' ')
-          val remove = s"$symbolStr$RemoveString".padTo(tablePadding, ' ')
-          val start = s"$symbolStr$StartString".padTo(tablePadding, ' ')
-          val abort = s"$symbolStr$AbortString".padTo(tablePadding, ' ')
-          val enrol = s"$symbolStr$EnrolString".padTo(tablePadding, ' ')
-          val winner = s"$symbolStr$WinnerString".padTo(tablePadding, ' ')
-          val reset = s"$symbolStr$ResetString".padTo(tablePadding, ' ')
-          val relocate = s"$symbolStr$RelocateString".padTo(tablePadding, ' ')
-          val shutdown = s"$symbolStr$ShutdownString".padTo(tablePadding, ' ')
+          val clear = s"$symbolStr$ClearString".pad(tablePadding)
+          val addPlayer = s"$symbolStr$AddPlayerString".pad(tablePadding)
+          val remove = s"$symbolStr$RemoveString".pad(tablePadding)
+          val start = s"$symbolStr$StartString".pad(tablePadding)
+          val abort = s"$symbolStr$AbortString".pad(tablePadding)
+          val enrol = s"$symbolStr$EnrolString".pad(tablePadding)
+          val winner = s"$symbolStr$WinnerString".pad(tablePadding)
+          val reset = s"$symbolStr$ResetString".pad(tablePadding)
+          val reprocess = s"$symbolStr$ReprocessString".pad(tablePadding)
+          val addMatch = s"$symbolStr$AddMatchString".pad(tablePadding)
+          val relocateRooms = s"$symbolStr$RelocateRoomsString".pad(tablePadding)
+          val relocateLobby = s"$symbolStr$RelocateLobbyString".pad(tablePadding)
+          val shutdown = s"$symbolStr$ShutdownString".pad(tablePadding)
           Seq(
             s"""$clear Clear the queue""",
-            s"""$add Add the target player to the queue""",
+            s"""$addPlayer Add the target player to the queue""",
             s"""$remove Remove the target player from the queue""",
             s"""$start Starts a match with the players in the queue""",
             s"""$abort Abort an ongoing match""",
             s"""$enrol Register another user""",
             s"""$winner Declare a winner for an on-going match""",
             s"""$reset Reset all players rating to default values""",
-            s"""$relocate Move match players to the right voice rooms""",
+            s"""$reprocess Reprocess the matches in the database""",
+            s"""$addMatch Adds a match to the database""",
+            s"""$relocateRooms Move match players to the right voice rooms""",
+            s"""$relocateLobby Move match players to the lobby voice room""",
             s"""$shutdown Shuts the bot down"""
-          ).mkString("```Admin command list:\n", "\n", s"\n\nFor more details, say ${symbolStr}help <command>```")
+          ).mkString("```Admin command list:\n\n", "\n", s"\n\nFor more details, say ${symbolStr}help <command>```")
       }
       m.textChannel.sendMessage(helpText)
     })
 
-  val commandList = Seq(clear, add, remove, start, abort, enrol, shutdown, help, winner, reset, relocate)
+  val commandList = Seq(clear, addPlayer, remove, start, abort, enrol, shutdown, help, winner, reset, reprocess,
+    addMatch, relocateRooms, relocateLobby)
 }

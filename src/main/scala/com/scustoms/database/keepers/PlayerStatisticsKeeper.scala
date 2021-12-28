@@ -3,7 +3,7 @@ package com.scustoms.database.keepers
 import ackcord.data.UserId
 import com.scustoms.database.DatabaseManager
 import com.scustoms.database.DatabaseManager.DatabaseError
-import com.scustoms.services.RatingService
+import com.scustoms.trueskill.RatingUtils
 import de.gesundkrank.jskills.{GameInfo, Rating}
 import slick.jdbc.SQLiteProfile.api._
 import slick.lifted.ProvenShape
@@ -18,7 +18,7 @@ object PlayerStatisticsKeeper {
 
   object PlayerStatistics {
     def emptyPlayerStatistics: PlayerStatistics = {
-      PlayerStatistics(0L, new Rating(RatingService.defaultGameInfo.getInitialMean, RatingService.defaultGameInfo.getInitialStandardDeviation), 0L, 0L)
+      PlayerStatistics(0L, new Rating(RatingUtils.defaultGameInfo.getInitialMean, RatingUtils.defaultGameInfo.getInitialStandardDeviation), 0L, 0L)
     }
 
     def fromTuple(tuple: PlayersStatisticsTableTuple): PlayerStatistics = {
@@ -31,16 +31,19 @@ object PlayerStatisticsKeeper {
       (id, playerDiscordId.toUnsignedLong, rating.getMean, rating.getStandardDeviation, wins, games)
     }
 
-    def formattedRating: String = f"${rating.getConservativeRating}%1.2f"
+    def formattedRating: String = f"${rating.getConservativeRating}%03.02f"
 
-    def winRate: Double = if (games <= 0) 1.0 else wins.toDouble / games
+    def winRate: Double = if (games <= 0) 1.0 else wins.toDouble / games.toDouble
 
-    def winRatePercentage: String = f"${winRate * 100.0}%1.2f"
+    def winRatePercentage: String = f"${winRate * 100.0}%02.01f"
+
+    def updated(newRating: Rating, won: Boolean): PlayerStatistics =
+      this.copy(rating = newRating, games = games + 1, wins = wins + (if (won) 1 else 0))
   }
 
-  class PlayersStatistics(tag: Tag) extends Table[PlayersStatisticsTableTuple](tag, "playersStatistics") {
+  class PlayerStatisticsTableSchema(tag: Tag) extends Table[PlayersStatisticsTableTuple](tag, "playersStatistics") {
     def id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
-    def playerDiscordId: Rep[Long] = column[Long]("playerDiscordId")
+    def playerDiscordId: Rep[Long] = column[Long]("playerDiscordId", O.Unique)
     def ratingMean: Rep[Double] = column[Double]("ratingMean")
     def ratingStdDev: Rep[Double] = column[Double]("ratingStdDev")
     def wins: Rep[Long] = column[Long]("wins")
@@ -50,15 +53,15 @@ object PlayerStatisticsKeeper {
       (id, playerDiscordId, ratingMean, ratingStdDev, wins, games)
   }
 
-  val playersStatisticsTable: TableQuery[PlayersStatistics] = TableQuery[PlayersStatistics]
+  val playersStatisticsTable: TableQuery[PlayerStatisticsTableSchema] = TableQuery[PlayerStatisticsTableSchema]
 }
 
 class PlayerStatisticsKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContext) {
   import PlayerStatisticsKeeper._
 
-  def insert(discordId: UserId): Future[Int] = {
+  def insert(discordId: UserId): Future[Long] = {
     databaseManager.runTransaction {
-      playersStatisticsTable += PlayerStatistics.emptyPlayerStatistics.*(discordId)
+      playersStatisticsTable returning playersStatisticsTable.map(_.id) += PlayerStatistics.emptyPlayerStatistics.*(discordId)
     }
   }
 

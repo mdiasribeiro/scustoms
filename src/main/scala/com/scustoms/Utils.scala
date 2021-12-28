@@ -19,4 +19,19 @@ object Utils {
     s.foldLeft(Right(Nil): Either[A, Seq[B]]) {
       (acc, e) => for (x <- e; xs <- acc) yield xs :+ x
     }
+
+  implicit class StringImprovements(val s: String) {
+    def pad(padding: Int): String = {
+      val str = s.trim
+      if (str.length > padding - 1) {
+        str.substring(0, padding - 4).appendedAll("... ")
+      } else {
+        str.padTo(padding, ' ')
+      }
+    }
+  }
+
+  implicit class SeqImprovements(val s: Seq[String]) {
+    def padConcat(padding: Int): String = s.map(_.pad(padding)).reduceLeft(_ + _)
+  }
 }
