@@ -83,7 +83,7 @@ class UserCommands(config: Config,
 
   val LeaderboardString = "leaderboard"
   val leaderboard: NamedCommand[NotUsed] = GuildCommand
-    .named(userCommandSymbols, Seq(LeaderboardString))
+    .named(userCommandSymbols, Seq(LeaderboardString, "lederborde", "lederboard", "leatherboard"))
     .asyncOpt(implicit userCommandMessage =>
       OptFuture.fromFuture(playerService.getAllPlayers).flatMap {
         players =>

@@ -14,6 +14,8 @@ class ScustomsBot(discordToken: String, config: Config) {
   val clientSettings: ClientSettings = ClientSettings(discordToken)
   import clientSettings.executionContext
 
+  var firstStart = true
+
   implicit val client: DiscordClient = Await.result(clientSettings.createClient(), 10.seconds)
 
   val databaseManager = new DatabaseManager
@@ -37,12 +39,10 @@ class ScustomsBot(discordToken: String, config: Config) {
     case APIMessage.Ready(_) =>
       println("Now ready")
       OptFuture.unit
-    case APIMessage.GuildCreate(guild, _) if guild.id == StaticReferences.guildId =>
+    case APIMessage.GuildCreate(guild, _) if guild.id == StaticReferences.guildId & firstStart =>
+      firstStart = false
       val channel = OptFuture.fromOption(StaticReferences.botChannel.resolve(StaticReferences.guildId))
       channel.map(channel => client.requestsHelper.run(channel.sendMessage("I'm back online.")))
-    case another =>
-      println(s"New event of type: ${another.getClass.getSimpleName}")
-      OptFuture.unit
   }}
 
   client.login()

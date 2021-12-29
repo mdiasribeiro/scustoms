@@ -37,9 +37,9 @@ object DiscordUtils {
   }
 
   def ongoingMatchToString(m: MatchService.OngoingMatch, teamA: String, teamB: String, columnSize: Int)(implicit c: CacheSnapshot): String = {
-    val header = s"${"Username".pad(columnSize)}${"Role".pad(columnSize)}${"Rating".pad(columnSize)}"
-    val teamAPlayers = playersToStrings(m.team1, columnSize).mkString(s"\n$teamA\n$header\n", "\n", "")
-    val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n$teamB\n$header\n", "\n", "")
+    val header = s"${"Role".pad(columnSize)}${"Rating".pad(columnSize)}"
+    val teamAPlayers = playersToStrings(m.team1, columnSize).mkString(s"\n${teamA.pad(columnSize)}$header\n", "\n", "")
+    val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n${teamB.pad(columnSize)}$header\n", "\n", "")
     val quality = f"${m.quality * 100}%3.02f"
     s"```Match probability of draw: $quality%\n$teamAPlayers\n$teamBPlayers```"
   }

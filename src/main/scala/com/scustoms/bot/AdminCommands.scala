@@ -11,7 +11,6 @@ import com.scustoms.database.keepers.PlayerKeeper
 import com.scustoms.database.StaticReferences
 import com.scustoms.database.keepers.MatchKeeper.{StoredMatch, StoredMatchTeam}
 import com.scustoms.services.MatchService.OngoingMatch
-import com.scustoms.services.QueueService.QueuedPlayer
 import com.scustoms.services.{MatchService, PlayerService, QueueService}
 import com.scustoms.trueskill.RatingUtils
 import com.typesafe.config.Config
@@ -67,6 +66,44 @@ class AdminCommands(config: Config,
       }
     })
 
+  final val SwapPlayersString = "swapPlayers"
+  val swapPlayers: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
+    .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
+    .named(adminCommandSymbols, Seq(SwapPlayersString))
+    .parsing[(String, String)](MessageParser.Auto.deriveParser)
+    .asyncOpt(implicit command => {
+      val parsedUserId1 = DiscordUtils.getUserIdFromMention(command.parsed._1)
+      val parsedUserId2 = DiscordUtils.getUserIdFromMention(command.parsed._2)
+      val ongoingMatch = matchService.ongoingMatch
+      (parsedUserId1, parsedUserId2, ongoingMatch) match {
+        case (Some(userId1), Some(userId2), Some(ongoingMatch)) =>
+          val result = (ongoingMatch.contains(userId1), ongoingMatch.contains(userId2)) match {
+            case (true, true) =>
+              Future.successful(matchService.swapPlayers(userId1, userId2))
+            case (true, false) =>
+              queueService.remove(userId2)
+              playerService.find(userId2).map(_.flatMap(player2Data => matchService.swapPlayer(userId1, player2Data)))
+            case (false, true) =>
+              queueService.remove(userId1)
+              playerService.find(userId1).map(_.flatMap(player1Data => matchService.swapPlayer(userId2, player1Data)))
+            case (false, false) =>
+              Future.successful(None)
+          }
+          OptFuture.fromFuture(result).map {
+            case Some(newMatch) =>
+              matchService.ongoingMatch = Some(newMatch)
+              val msg = DiscordUtils.ongoingMatchToString(newMatch, "TEAM 1", "TEAM 2", tablePadding)
+              DiscordUtils.reactAndRespond(positiveMark, msg)
+            case None =>
+              DiscordUtils.reactAndRespond(negativeMark, s"At least one player could not be found")
+          }
+        case (_, _, None) =>
+          DiscordUtils.reactAndRespond(negativeMark, s"There is no ongoing game")
+        case (_, _, Some(_)) =>
+          DiscordUtils.reactAndRespond(negativeMark, "Player mention could not be parsed")
+      }
+    })
+
   final val RemoveString = "removePlayer"
   val remove: NamedComplexCommand[String, NotUsed] = GuildCommand
     .andThen(CommandBuilder.needPermission[GuildMemberCommandMessage](Permission.Administrator))
@@ -111,11 +148,9 @@ class AdminCommands(config: Config,
     .named(adminCommandSymbols, Seq(AbortString))
     .asyncOpt(implicit m => {
       matchService.ongoingMatch match {
-        case Some(ongoingMatch) =>
+        case Some(_) =>
           matchService.ongoingMatch = None
-          ongoingMatch.team1.seq.foreach(p => queueService.addPlayer(QueuedPlayer(p.role.toQueueRole, p.state)))
-          ongoingMatch.team2.seq.foreach(p => queueService.addPlayer(QueuedPlayer(p.role.toQueueRole, p.state)))
-          DiscordUtils.reactAndRespond(positiveMark, s"Match aborted. Players were placed back in the queue.")
+          DiscordUtils.reactAndRespond(positiveMark, s"Match was aborted. Please join the queue again.")
         case None =>
           DiscordUtils.reactAndRespond(negativeMark, s"There is no on-going match to abort.")
       }
@@ -340,6 +375,11 @@ class AdminCommands(config: Config,
              |Usage: $symbolStr$AddPlayerString <discord_mention> <?role>
              |(Possible roles: top, jungle, mid, bot, sup/support, fill/any/empty)
              |```""".stripMargin
+        case Some(SwapPlayersString) =>
+          s"""```
+             |Swap at least one player in a match with another player (can also be in the match)
+             |Usage: $symbolStr$SwapPlayersString <mention1> <mention2>
+             |```""".stripMargin
         case Some(RemoveString) =>
           s"""```
              |Remove the target player from the queue
@@ -388,7 +428,7 @@ class AdminCommands(config: Config,
              |```""".stripMargin
         case Some(RelocateRoomsString) =>
           s"""```
-             |Move match players to the right voice rooms
+             |Move match players to the teams voice rooms
              |Usage: $symbolStr$RelocateRoomsString
              |```""".stripMargin
         case Some(RelocateLobbyString) =>
@@ -399,6 +439,7 @@ class AdminCommands(config: Config,
         case _ =>
           val clear = s"$symbolStr$ClearString".pad(tablePadding)
           val addPlayer = s"$symbolStr$AddPlayerString".pad(tablePadding)
+          val swapPlayers = s"$symbolStr$SwapPlayersString".pad(tablePadding)
           val remove = s"$symbolStr$RemoveString".pad(tablePadding)
           val start = s"$symbolStr$StartString".pad(tablePadding)
           val abort = s"$symbolStr$AbortString".pad(tablePadding)
@@ -413,6 +454,7 @@ class AdminCommands(config: Config,
           Seq(
             s"""$clear Clear the queue""",
             s"""$addPlayer Add the target player to the queue""",
+            s"""$swapPlayers Swap one in-game player with another""",
             s"""$remove Remove the target player from the queue""",
             s"""$start Starts a match with the players in the queue""",
             s"""$abort Abort an ongoing match""",
@@ -421,7 +463,7 @@ class AdminCommands(config: Config,
             s"""$reset Reset all players rating to default values""",
             s"""$reprocess Reprocess the matches in the database""",
             s"""$addMatch Adds a match to the database""",
-            s"""$relocateRooms Move match players to the right voice rooms""",
+            s"""$relocateRooms Move match players to the teams voice rooms""",
             s"""$relocateLobby Move match players to the lobby voice room""",
             s"""$shutdown Shuts the bot down"""
           ).mkString("```Admin command list:\n\n", "\n", s"\n\nFor more details, say ${symbolStr}help <command>```")
@@ -430,5 +472,5 @@ class AdminCommands(config: Config,
     })
 
   val commandList = Seq(clear, addPlayer, remove, start, abort, enrol, shutdown, help, winner, reset, reprocess,
-    addMatch, relocateRooms, relocateLobby)
+    addMatch, relocateRooms, relocateLobby, swapPlayers)
 }

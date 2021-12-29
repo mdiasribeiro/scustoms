@@ -6,6 +6,7 @@ import com.scustoms.database.keepers.PlayerKeeper.StoredPlayer
 import com.scustoms.database.keepers.MatchKeeper
 import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService.QueuedPlayer
+import com.scustoms.trueskill.RatingUtils.defaultGameInfo
 import com.scustoms.trueskill.{RatingUtils, TwoTeamCalculator}
 import de.gesundkrank.jskills.Rating
 
@@ -49,7 +50,16 @@ object MatchService {
       OngoingMatch(score, m.teamA, m.teamB)
     }
   }
-  case class OngoingMatch(quality: Double, team1: MatchTeam, team2: MatchTeam)
+  case class OngoingMatch(quality: Double, team1: MatchTeam, team2: MatchTeam) {
+    def contains(userId: UserId): Boolean = {
+      team1.seq.exists(_.state.discordId == userId) || team2.seq.exists(_.state.discordId == userId)
+    }
+
+    def getTeam(teamA: Boolean): MatchTeam = if (teamA) team1 else team2
+
+    def find(userId: UserId): Option[(MatchPlayer, Boolean)] =
+      team1.find(userId).map(p => (p, true)).orElse(team2.find(userId).map(p => (p, false)))
+  }
 
   object MatchTeam {
     def fromPlayersWithStatistics(seq: Seq[PlayerWithStatistics]): MatchTeam = {
@@ -84,6 +94,18 @@ object MatchService {
         support.updatedRating(supportRating, won)
       )
     }
+
+    def find(userId: UserId): Option[MatchPlayer] = seq.find(_.state.discordId == userId)
+
+    def swapPlayer(role: MatchRole, newPlayer: PlayerWithStatistics): MatchTeam = {
+      role match {
+        case Top => this.copy(top = MatchPlayer(role, newPlayer))
+        case Jungle => this.copy(jungle = MatchPlayer(role, newPlayer))
+        case Mid => this.copy(mid = MatchPlayer(role, newPlayer))
+        case Bot => this.copy(bot = MatchPlayer(role, newPlayer))
+        case Support => this.copy(support = MatchPlayer(role, newPlayer))
+      }
+    }
   }
 
   case class ResolvedMatch(team1Won: Boolean, teamA: MatchTeam, teamB: MatchTeam)
@@ -96,6 +118,48 @@ class MatchService(matchKeeper: MatchKeeper, playerService: PlayerService)(impli
   import MatchService._
 
   var ongoingMatch: Option[OngoingMatch] = None
+
+  def swapPlayers(userId1: UserId, userId2: UserId): Option[OngoingMatch] = {
+    ongoingMatch.flatMap(m => {
+      val newTeams = (m.find(userId1), m.find(userId2)) match {
+        case (Some((p1, p1team)), Some((p2, p2team))) =>
+          if (p1team == p2team) {
+            val teamA = m.getTeam(p1team).swapPlayer(p1.role, p2.state).swapPlayer(p2.role, p1.state)
+            val teamB = m.getTeam(!p1team)
+            if (p1team) Some((teamA, teamB)) else Some((teamB, teamA))
+          } else {
+            val teamA = m.getTeam(p1team).swapPlayer(p1.role, p2.state)
+            val teamB = m.getTeam(p2team).swapPlayer(p2.role, p1.state)
+            if (p1team) Some((teamA, teamB)) else Some((teamB, teamA))
+          }
+        case _ =>
+          None
+      }
+      newTeams.map {
+        case (teamA, teamB) =>
+          val matchQuality = TwoTeamCalculator.calculateMatchQuality(defaultGameInfo, teamA, teamB)
+          OngoingMatch(matchQuality, teamA, teamB)
+      }
+    })
+  }
+
+  def swapPlayer(userId1: UserId, otherPlayer: PlayerWithStatistics): Option[OngoingMatch] = {
+    ongoingMatch.flatMap(m => {
+      val newTeams = m.find(userId1) match {
+        case Some((p1, p1team)) =>
+          val teamA = m.getTeam(p1team).swapPlayer(p1.role, otherPlayer)
+          val teamB = m.getTeam(!p1team)
+          if (p1team) Some((teamA, teamB)) else Some((teamB, teamA))
+        case _ =>
+          None
+      }
+      newTeams.map {
+        case (teamA, teamB) =>
+          val matchQuality = TwoTeamCalculator.calculateMatchQuality(defaultGameInfo, teamA, teamB)
+          OngoingMatch(matchQuality, teamA, teamB)
+      }
+    })
+  }
 
   def contains(userId: UserId): Boolean = ongoingMatch.exists(m =>
     m.team1.seq.exists(_.state.discordId == userId) || m.team2.seq.exists(_.state.discordId == userId))
