@@ -87,10 +87,10 @@ class PlayerKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionConte
       .result
   }
 
-  def updateUsernames(discordId: UserId, discordUsername: String, gameUsername: String): Future[Int] = databaseManager.runTransaction {
+  def updateGameUsername(discordId: UserId, gameUsername: String): Future[Int] = databaseManager.runTransaction {
     playersTable
       .filter(p => p.discordId === discordId.toUnsignedLong)
-      .map(p => (p.discordUsername, p.gameUsername))
-      .update((discordUsername, gameUsername))
+      .map(p => p.gameUsername)
+      .update(gameUsername)
   }
 }

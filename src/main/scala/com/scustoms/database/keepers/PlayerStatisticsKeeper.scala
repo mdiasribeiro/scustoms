@@ -4,6 +4,7 @@ import ackcord.data.UserId
 import com.scustoms.database.DatabaseManager
 import com.scustoms.database.DatabaseManager.DatabaseError
 import com.scustoms.trueskill.RatingUtils
+import com.scustoms.trueskill.RatingUtils.{percentageFormat, ratingFormat}
 import de.gesundkrank.jskills.{GameInfo, Rating}
 import slick.jdbc.SQLiteProfile.api._
 import slick.lifted.ProvenShape
@@ -31,11 +32,13 @@ object PlayerStatisticsKeeper {
       (id, playerDiscordId.toUnsignedLong, rating.getMean, rating.getStandardDeviation, wins, games)
     }
 
-    def formattedRating: String = f"${rating.getConservativeRating}%03.02f"
+    def formattedMeanRating: String = ratingFormat(rating.getMean)
+
+    def formattedConservativeRating: String = ratingFormat(rating.getConservativeRating)
 
     def winRate: Double = if (games <= 0) 1.0 else wins.toDouble / games.toDouble
 
-    def winRatePercentage: String = f"${winRate * 100.0}%02.01f"
+    def winRatePercentage: String = percentageFormat(winRate * 100.0)
 
     def updated(newRating: Rating, won: Boolean): PlayerStatistics =
       this.copy(rating = newRating, games = games + 1, wins = wins + (if (won) 1 else 0))

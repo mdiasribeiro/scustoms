@@ -11,24 +11,42 @@ object RatingUtils {
 
   val defaultGameInfo: GameInfo = GameInfo.getDefaultGameInfo
 
+  def ratingFormat(r: Double): String = f"$r%03.02f"
+  def percentageFormat(p: Double): String = f"$p%02.01f"
+
   def calculate(m: OngoingMatch, team1Won: Boolean): ResolvedMatch = {
     val (updatedTeam1, updatedTeam2) = TwoTeamCalculator.calculatePlayerRatings(defaultGameInfo, m.team1, m.team2, team1Won)
     ResolvedMatch(team1Won, updatedTeam1, updatedTeam2)
   }
 
-  def tryMatch(players: Seq[QueuedPlayer], role: MatchRole): Option[(LaneMatchUp, Seq[QueuedPlayer])] = {
-    val queueLength = players.length
-    if (queueLength >= 2) {
-      val results = (0 until queueLength).flatMap { i =>
-        val player1 = MatchPlayer.fromQueuedPlayer(players(i), role)
-        ((i + 1) until queueLength).map { j =>
-          val player2 = MatchPlayer.fromQueuedPlayer(players(j), role)
-          val matchUp = TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, player1, player2)
-          LaneMatchUp(matchUp, player1, player2)
-        }
+  private def findLaneMatch(player1: MatchPlayer, others: Seq[MatchPlayer]): LaneMatchUp = {
+    others.map { player2 =>
+      val matchUp = TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, player1, player2)
+      LaneMatchUp(matchUp, player1, player2)
+    }.maxBy(_.quality)
+  }
+
+  private def matchLane(players: Seq[MatchPlayer]): LaneMatchUp = {
+    players.zipWithIndex.map {
+      case (player, index) =>
+        findLaneMatch(player, players.drop(index + 1))
+    }.maxBy(_.quality)
+  }
+
+  def tryMatch(rolePlayers: Seq[MatchPlayer], fillPlayers: Seq[QueuedPlayer], role: MatchRole): Option[(LaneMatchUp, Seq[QueuedPlayer])] = {
+    if (rolePlayers.length + fillPlayers.length >= 2) {
+      val bestMatchUp = rolePlayers.length match {
+        case 0 =>
+          val convertedFillPlayers = fillPlayers.map(_.toMatchPlayer(role))
+          matchLane(convertedFillPlayers)
+        case 1 =>
+          val convertedFillPlayers = fillPlayers.map(_.toMatchPlayer(role))
+          findLaneMatch(rolePlayers.head, convertedFillPlayers)
+        case _ =>
+          matchLane(rolePlayers)
       }
-      val bestMatchUp = results.maxBy(_.quality)
-      val remainingPlayers = players.filterNot(p =>
+
+      val remainingPlayers = (rolePlayers.map(_.toQueuedPlayer(QueueService.Fill)) ++ fillPlayers).filterNot(p =>
         p.stats.discordId == bestMatchUp.player1.state.discordId || p.stats.discordId == bestMatchUp.player2.state.discordId)
 
       Some((bestMatchUp, remainingPlayers))
@@ -40,7 +58,7 @@ object RatingUtils {
   def arrangeTeams(top: LaneMatchUp, jungle: LaneMatchUp, mid: LaneMatchUp, bot: LaneMatchUp, support: LaneMatchUp): OngoingMatch = {
     val (t1, t2) = (top.player1, top.player2)
 
-    val firstTeam = Seq(false, true)
+    val firstTeam = Seq(true, false)
 
     val allMatches = for {
       j <- firstTeam
@@ -67,11 +85,11 @@ object RatingUtils {
 
     val playersByRole = players.groupBy(_.role)
 
-    val topPlayers = playersByRole.getOrElse(QueueService.Top, Seq.empty[QueuedPlayer])
-    val junglePlayers = playersByRole.getOrElse(QueueService.Jungle, Seq.empty[QueuedPlayer])
-    val midPlayers = playersByRole.getOrElse(QueueService.Mid, Seq.empty[QueuedPlayer])
-    val botPlayers = playersByRole.getOrElse(QueueService.Bot, Seq.empty[QueuedPlayer])
-    val supportPlayers = playersByRole.getOrElse(QueueService.Support, Seq.empty[QueuedPlayer])
+    val topPlayers = playersByRole.getOrElse(QueueService.Top, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Top))
+    val junglePlayers = playersByRole.getOrElse(QueueService.Jungle, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Jungle))
+    val midPlayers = playersByRole.getOrElse(QueueService.Mid, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Mid))
+    val botPlayers = playersByRole.getOrElse(QueueService.Bot, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Bot))
+    val supportPlayers = playersByRole.getOrElse(QueueService.Support, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Support))
     var fillPlayers = playersByRole.getOrElse(QueueService.Fill, Seq.empty[QueuedPlayer])
 
     var topMatchUp: Option[LaneMatchUp] = None
@@ -80,21 +98,13 @@ object RatingUtils {
     var botMatchUp: Option[LaneMatchUp] = None
     var supportMatchUp: Option[LaneMatchUp] = None
 
-    def matchRole(lanePairOpt: Option[LaneMatchUp], laneQueue: Seq[QueuedPlayer], role: MatchRole): Option[LaneMatchUp] = {
-      if (lanePairOpt.isEmpty) {
-        RatingUtils.tryMatch(laneQueue, role) match {
-          case Some((lanePair, remaining)) =>
-            fillPlayers ++= remaining
-            Some(lanePair)
-          case None =>
-            RatingUtils.tryMatch(laneQueue ++ fillPlayers, role).map {
-              case (lanePair, remaining) =>
-                fillPlayers = remaining
-                lanePair
-            }
+    def matchRole(lanePairOpt: Option[LaneMatchUp], laneQueue: Seq[MatchPlayer], role: MatchRole): Option[LaneMatchUp] = {
+      lanePairOpt.orElse {
+        RatingUtils.tryMatch(laneQueue, fillPlayers, role).map {
+          case (lanePair, remaining) =>
+            fillPlayers = remaining
+            lanePair
         }
-      } else {
-        lanePairOpt
       }
     }
 

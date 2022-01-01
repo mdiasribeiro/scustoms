@@ -1,7 +1,7 @@
 package com.scustoms.services
 
 import ackcord.data.UserId
-import com.scustoms.services.MatchService.MatchRole
+import com.scustoms.services.MatchService.{MatchPlayer, MatchRole}
 import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService.QueuedPlayer
 
@@ -43,6 +43,7 @@ object QueueService {
   }
 
   case class QueuedPlayer(role: QueueRole, stats: PlayerWithStatistics) {
+    def toMatchPlayer(role: MatchRole): MatchPlayer = MatchPlayer(role, stats)
     def discordId: UserId = stats.discordId
   }
 }
@@ -63,6 +64,12 @@ class QueueService {
       queue = queue.appended(player)
       true
     }
+
+  def upsertPlayer(player: QueuedPlayer): Boolean = {
+    val res = this.remove(player.stats.discordId)
+    queue = queue.appended(player)
+    res
+  }
 
   def addWatcher(userId: UserId): Boolean =
     if (this.contains(userId)) {

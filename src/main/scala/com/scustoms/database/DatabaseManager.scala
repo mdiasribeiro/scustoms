@@ -3,10 +3,8 @@ package com.scustoms.database
 import com.scustoms.database.keepers.{MatchKeeper, PlayerKeeper, PlayerStatisticsKeeper}
 import slick.{dbio, jdbc}
 
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future}
 import slick.jdbc.SQLiteProfile.api._
-
-import scala.concurrent.duration.DurationInt
 
 object DatabaseManager {
   trait DatabaseError
@@ -43,15 +41,5 @@ class DatabaseManager {
 
   def run[R, S <: dbio.NoStream, E <: dbio.Effect](operations: => DBIOAction[R, S, E]): Future[R] = {
     db.run(operations)
-  }
-
-  def runSync[R, S <: dbio.NoStream, E <: dbio.Effect](operations: => DBIOAction[R, S, E]): R = {
-    try {
-      Await.result(db.run(operations), 10.seconds)
-    } catch {
-      case err: Exception =>
-        println(s"Error in future: $err")
-        throw err
-    }
   }
 }

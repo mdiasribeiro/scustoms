@@ -31,8 +31,10 @@ class ScustomsBot(discordToken: String, config: Config) {
   val matchService = new MatchService(matchKeeper, playerService)
 
   val userCommands = new UserCommands(config, queueService, playerService, matchService)
-  val adminCommands = new AdminCommands(config, queueService, playerService, matchService)
+  val managerCommands = new ManagerCommands(config, queueService, playerService, matchService)
+  val adminCommands = new AdminCommands(config, playerService, matchService)
   client.commands.bulkRunNamed(userCommands.commandList: _*)
+  client.commands.bulkRunNamed(managerCommands.commandList: _*)
   client.commands.bulkRunNamed(adminCommands.commandList: _*)
 
   client.onEventAsync { implicit c => {
@@ -40,6 +42,7 @@ class ScustomsBot(discordToken: String, config: Config) {
       println("Now ready")
       OptFuture.unit
     case APIMessage.GuildCreate(guild, _) if guild.id == StaticReferences.guildId & firstStart =>
+      println("Back online")
       firstStart = false
       val channel = OptFuture.fromOption(StaticReferences.botChannel.resolve(StaticReferences.guildId))
       channel.map(channel => client.requestsHelper.run(channel.sendMessage("I'm back online.")))

@@ -10,6 +10,6 @@ object StaticReferences {
   val lobbyChannel: VoiceGuildChannelId = SnowflakeType[VoiceGuildChannel](925145733429084220L)
   val adminId: UserId = SnowflakeType[User](149979917570801665L)
   val customsRoleId: RoleId = SnowflakeType[Role](916068561603158106L)
-  val officerRoleId: RoleId = SnowflakeType[Role](757495119023702087L)
+  val managerRoleId: RoleId = SnowflakeType[Role](925340105919586304L)
   val adminRoleId: RoleId = SnowflakeType[Role](149982815004393472L)
 }

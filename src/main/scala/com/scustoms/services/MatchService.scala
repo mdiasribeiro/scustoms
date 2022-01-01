@@ -5,12 +5,13 @@ import com.scustoms.database.keepers.MatchKeeper.{StoredMatch, StoredMatchTeam}
 import com.scustoms.database.keepers.PlayerKeeper.StoredPlayer
 import com.scustoms.database.keepers.MatchKeeper
 import com.scustoms.services.PlayerService.PlayerWithStatistics
-import com.scustoms.services.QueueService.QueuedPlayer
+import com.scustoms.services.QueueService.{QueueRole, QueuedPlayer}
 import com.scustoms.trueskill.RatingUtils.defaultGameInfo
 import com.scustoms.trueskill.{RatingUtils, TwoTeamCalculator}
 import de.gesundkrank.jskills.Rating
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.{Await, ExecutionContext, Future}
 
 object MatchService {
   sealed trait MatchRole {
@@ -31,17 +32,15 @@ object MatchService {
     case QueueService.Fill => None
   }
 
-  object MatchPlayer {
-    def fromQueuedPlayer(p: QueuedPlayer, newRole: MatchRole): MatchPlayer = MatchPlayer(newRole, p.stats)
-    def fromPlayerWithStatistics(p: PlayerWithStatistics, role: MatchRole): MatchPlayer = MatchPlayer(role, p)
-  }
-
   case class MatchPlayer(role: MatchRole, state: PlayerWithStatistics) {
     def toPlayer: StoredPlayer = state.toStoredPlayer
 
     def getMatchRating: Rating = state.getRoleStatistics(role).rating
+
     def updatedRating(newRating: Rating, won: Boolean): MatchPlayer =
       this.copy(state = state.updatedRating(role, newRating, won))
+
+    def toQueuedPlayer(role: QueueRole): QueuedPlayer = QueuedPlayer(role, state)
   }
 
   object OngoingMatch {
@@ -65,11 +64,11 @@ object MatchService {
     def fromPlayersWithStatistics(seq: Seq[PlayerWithStatistics]): MatchTeam = {
       val Seq(t, j, m, b, s) = seq
       MatchTeam(
-        MatchPlayer.fromPlayerWithStatistics(t, MatchService.Top),
-        MatchPlayer.fromPlayerWithStatistics(j, MatchService.Jungle),
-        MatchPlayer.fromPlayerWithStatistics(m, MatchService.Mid),
-        MatchPlayer.fromPlayerWithStatistics(b, MatchService.Bot),
-        MatchPlayer.fromPlayerWithStatistics(s, MatchService.Support)
+        t.toMatchPlayer(MatchService.Top),
+        j.toMatchPlayer(MatchService.Jungle),
+        m.toMatchPlayer(MatchService.Mid),
+        b.toMatchPlayer(MatchService.Bot),
+        s.toMatchPlayer(MatchService.Support)
       )
     }
   }
@@ -221,6 +220,14 @@ class MatchService(matchKeeper: MatchKeeper, playerService: PlayerService)(impli
       _ <- updateTeamRatings(resolvedMatch.teamA)
       _ <- updateTeamRatings(resolvedMatch.teamB)
     } yield ()
+  }
+
+  def updateRatingsSync(resolvedMatch: ResolvedMatch): Unit = {
+    val f = for {
+      _ <- updateTeamRatings(resolvedMatch.teamA)
+      _ <- updateTeamRatings(resolvedMatch.teamB)
+    } yield ()
+    Await.result(f, 10.seconds)
   }
 
   def resolveTeam(team: StoredMatchTeam): Future[Option[MatchTeam]] =

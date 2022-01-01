@@ -8,9 +8,11 @@ import akka.NotUsed
 import Emojis.{negativeMark, positiveMark}
 import com.scustoms.database.keepers.PlayerKeeper
 import com.scustoms.database.StaticReferences
-import com.scustoms.services.MatchService.ResolvedMatch
+import com.scustoms.services.MatchService.{MatchRole, ResolvedMatch}
+import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService._
 import com.scustoms.services.{MatchService, PlayerService, QueueService}
+import com.scustoms.trueskill.RatingUtils.{percentageFormat, ratingFormat}
 import com.typesafe.config.Config
 
 import scala.concurrent.Future
@@ -22,14 +24,21 @@ class UserCommands(config: Config,
                   )(implicit client: DiscordClient) extends CommandController(client.requests) {
 
   import com.scustoms.Utils.StringImprovements
-  import com.scustoms.Utils.SeqImprovements
 
-  val userCommandSymbols = Seq(config.getString("scustoms.userCommandSymbol"))
+  val userCommandsSymbol: String = config.getString("scustoms.userCommandSymbol")
+  val userCommandSymbols = Seq(
+    userCommandsSymbol,
+    config.getString("scustoms.managerCommandSymbol"),
+    config.getString("scustoms.adminCommandSymbol")
+  )
+
   val tablePadding: Int = config.getInt("scustoms.tablePadding")
   val shortTablePadding: Int = config.getInt("scustoms.shortTablePadding")
+  val indexPadding: Int = config.getInt("scustoms.indexPadding")
 
   val RegisteredString = "registered"
   val registered: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(RegisteredString))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit m => {
@@ -51,6 +60,7 @@ class UserCommands(config: Config,
 
   val InfoString = "info"
   val info: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(InfoString))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit userCommandMessage => {
@@ -61,17 +71,7 @@ class UserCommands(config: Config,
         case Some(playerId) =>
           OptFuture.fromFuture(playerService.find(playerId)).flatMap {
             case Some(player) =>
-              val header = Seq("Role", "# Games", "Win rate", "Rating").padConcat(shortTablePadding)
-              val top = Seq("Top", player.topStats.games.toString, player.topStats.winRatePercentage, player.topStats.formattedRating).padConcat(shortTablePadding)
-              val jungle = Seq("Jungle", player.jungleStats.games.toString, player.jungleStats.winRatePercentage, player.jungleStats.formattedRating).padConcat(shortTablePadding)
-              val mid = Seq("Mid", player.midStats.games.toString, player.midStats.winRatePercentage, player.midStats.formattedRating).padConcat(shortTablePadding)
-              val bot = Seq("Bot", player.botStats.games.toString, player.botStats.winRatePercentage, player.botStats.formattedRating).padConcat(shortTablePadding)
-              val support = Seq("Support", player.supportStats.games.toString, player.supportStats.winRatePercentage, player.supportStats.formattedRating).padConcat(shortTablePadding)
-              val message =
-                s"""```
-                   |In-game name: ${player.gameUsername}\n
-                   |$header\n$top\n$jungle\n$mid\n$bot\n$support
-                   |```""".stripMargin
+              val message = DiscordUtils.playerToString(player, shortTablePadding)
               DiscordUtils.reactAndRespond(positiveMark, message)
             case None =>
               DiscordUtils.reactAndRespond(negativeMark, "Player not found. Make sure you have registered first.")
@@ -82,35 +82,79 @@ class UserCommands(config: Config,
     })
 
   val LeaderboardString = "leaderboard"
+  case class BestStatistics(conservativeRating: Double, meanRating: Double, role: MatchRole, player: PlayerWithStatistics)
   val leaderboard: NamedCommand[NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(LeaderboardString, "lederborde", "lederboard", "leatherboard"))
     .asyncOpt(implicit userCommandMessage =>
       OptFuture.fromFuture(playerService.getAllPlayers).flatMap {
         players =>
           val playerStrings = players
             .filter(_.totalGames > 0)
-            .flatMap(p =>
-              p.getBestStatistics.map(bestStats => (bestStats._2.rating.getConservativeRating, bestStats._1, bestStats._2, p))
-            )
-            .sortBy(_._1)
+            .flatMap(p => p.getBestStatistics.map(bestStats => {
+              val rating = bestStats._2.rating
+              BestStatistics(rating.getConservativeRating, rating.getMean, bestStats._1, p)
+            }))
+            .sortBy(_.conservativeRating)
             .reverse
             .zipWithIndex
-            .map { case ((rating, role, statistics, player), index) =>
-              val paddedIndex = (index + 1).toString.pad(shortTablePadding)
+            .map { case (BestStatistics(cRating, mRating, role, player), index) =>
+              val paddedIndex = (index + 1).toString.pad(indexPadding)
               val paddedUsername = player.gameUsername.pad(tablePadding)
               val paddedRole = role.toString.pad(shortTablePadding)
+              val statistics = player.getRoleStatistics(role)
               val paddedWinRate = statistics.winRatePercentage.appended('%').pad(shortTablePadding)
               val paddedGamesPlayed = statistics.games.toString.pad(shortTablePadding)
-              val paddedRating = f"$rating%1.2f".pad(shortTablePadding)
-              f"$paddedIndex$paddedUsername$paddedRole$paddedGamesPlayed$paddedWinRate$paddedRating"
+              val paddedMRating = ratingFormat(mRating).pad(shortTablePadding)
+              val paddedCRating = ratingFormat(cRating).pad(shortTablePadding)
+              f"$paddedIndex$paddedUsername$paddedRole$paddedGamesPlayed$paddedWinRate$paddedMRating$paddedCRating"
             }
           val header = Seq(
-            "#".pad(shortTablePadding),
+            "#".pad(indexPadding),
             "Username".pad(tablePadding),
             "Role".pad(shortTablePadding),
             "# Games".pad(shortTablePadding),
             "Win rate".pad(shortTablePadding),
-            "Rating".pad(shortTablePadding)
+            "M. Rating".pad(shortTablePadding),
+            "C. Rating".pad(shortTablePadding)
+          ).reduceLeft(_ + _)
+          val message = playerStrings.mkString(s"```$header\n\n", "\n", "```")
+          DiscordUtils.reactAndRespond(positiveMark, message)
+      }
+    )
+
+  val SuadosString = "suados"
+  val suados: NamedCommand[NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .named(userCommandSymbols, Seq(SuadosString))
+    .asyncOpt(implicit userCommandMessage =>
+      OptFuture.fromFuture(playerService.getAllPlayers).flatMap {
+        players =>
+          val playerStrings = players
+            .filter(_.totalGames >= 10)
+            .flatMap(p => p.getBestStatistics.map(bestStats =>
+              (bestStats._2.games * 100.0 / p.totalGames, bestStats._1, bestStats._2, p)
+            ))
+            .filter(_._1 > 50)
+            .sortBy(_._1)
+            .reverse
+            .zipWithIndex
+            .map { case ((suor, role, statistics, player), index) =>
+              val paddedIndex = (index + 1).toString.pad(indexPadding)
+              val paddedUsername = player.gameUsername.pad(tablePadding)
+              val paddedRole = role.toString.pad(shortTablePadding)
+              val paddedWinRate = statistics.winRatePercentage.appended('%').pad(shortTablePadding)
+              val paddedGamesPlayed = statistics.games.toString.pad(shortTablePadding)
+              val paddedRating = percentageFormat(suor).appended('%').pad(tablePadding)
+              f"$paddedIndex$paddedUsername$paddedRole$paddedGamesPlayed$paddedWinRate$paddedRating"
+            }
+          val header = Seq(
+            "#".pad(indexPadding),
+            "Username".pad(tablePadding),
+            "Role".pad(shortTablePadding),
+            "# Games".pad(shortTablePadding),
+            "Win rate".pad(shortTablePadding),
+            "Racio de suor".pad(tablePadding)
           ).reduceLeft(_ + _)
           val message = playerStrings.mkString(s"```$header\n\n", "\n", "```")
           DiscordUtils.reactAndRespond(positiveMark, message)
@@ -119,6 +163,7 @@ class UserCommands(config: Config,
 
   val HistoryString = "history"
   val history: NamedComplexCommand[Option[Int], NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(HistoryString))
     .parsing[Option[Int]](MessageParser.optional)
     .asyncOpt(implicit userCommandMessage => {
@@ -129,17 +174,19 @@ class UserCommands(config: Config,
             case ResolvedMatch(teamAWon, teamA, teamB) =>
               val teamAString = teamA.seq.map(_.state.gameUsername.pad(shortTablePadding)).mkString("")
               val teamBString = teamB.seq.map(_.state.gameUsername.pad(shortTablePadding)).mkString("")
-              val winner = if (teamAWon) "Team A".pad(shortTablePadding) else "Team B".pad(shortTablePadding)
-              f"$winner$teamAString|$teamBString"
+              val winnerA = if (teamAWon) "Won".pad(shortTablePadding) else "Lost".pad(shortTablePadding)
+              val winnerB = if (!teamAWon) "Won".pad(shortTablePadding) else "Lost".pad(shortTablePadding)
+              f"$winnerA$teamAString\n$winnerB$teamBString\n"
           }
-          val header = s"${"Winner".pad(shortTablePadding)}${"Team 1".pad(shortTablePadding * 5)} ${"Team 2".pad(shortTablePadding * 5)}"
-          val message = matchStrings.mkString(s"```$header\n", "\n", "```")
+          val header = s"${"Result".pad(shortTablePadding)}${"Teams".pad(shortTablePadding * 5)}"
+          val message = matchStrings.mkString(s"```$header\n\n", "\n", "```")
           DiscordUtils.reactAndRespond(positiveMark, message)
       }
     })
 
   val RegisterString = "register"
   val register: NamedComplexCommand[String, NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(RegisterString))
     .parsing[String]
     .asyncOpt(implicit m => {
@@ -158,12 +205,11 @@ class UserCommands(config: Config,
 
   val JoinString = "join"
   val join: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(JoinString))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit command => {
-      val result: Future[Either[QueueError, QueuedPlayer]] = if (queueService.contains(command.user.id)) {
-        Future.successful(Left(PlayerAlreadyInQueue))
-      } else if (matchService.contains(command.user.id)) {
+      val result: Future[Either[QueueError, QueuedPlayer]] = if (matchService.contains(command.user.id)) {
         Future.successful(Left(PlayerAlreadyInMatch))
       } else {
         playerService.find(command.user.id).map {
@@ -180,7 +226,7 @@ class UserCommands(config: Config,
 
       OptFuture.fromFuture(result).map {
         case Right(queuedPlayer) =>
-          queueService.addPlayer(queuedPlayer)
+          queueService.upsertPlayer(queuedPlayer)
           val message = s"${command.user.mention} joined the queue (role: ${queuedPlayer.role}). Current queue size: ${queueService.length}"
           DiscordUtils.reactAndRespond(positiveMark, message)
         case Left(error) =>
@@ -190,6 +236,7 @@ class UserCommands(config: Config,
 
   val LeaveString = "leave"
   val leave: NamedCommand[NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(LeaveString))
     .asyncOpt(implicit command =>
       if (queueService.remove(command.user.id))
@@ -200,6 +247,7 @@ class UserCommands(config: Config,
 
   val WatchString = "watch"
   val watch: NamedCommand[NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(WatchString))
     .asyncOpt(implicit command => {
       if (queueService.contains(command.user.id)) {
@@ -215,25 +263,27 @@ class UserCommands(config: Config,
 
   val ShowString = "show"
   val show: NamedCommand[NotUsed] = GuildCommand
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(ShowString))
     .withRequest(implicit m => {
       val allPlayersStrings = queueService.getQueue.zipWithIndex.map {
         case (QueuedPlayer(QueueService.Fill, player), index) =>
-          s"${(index + 1).toString.pad(shortTablePadding)}${player.gameUsername.pad(tablePadding)}${QueueService.Fill.toString.pad(shortTablePadding)}"
+          s"${(index + 1).toString.pad(indexPadding)}${player.gameUsername.pad(tablePadding)}${QueueService.Fill.toString.pad(shortTablePadding)}"
         case (QueuedPlayer(role, player), index) =>
-          val ratingStr = player.niceString(role.toMatchRole).pad(shortTablePadding)
-          s"${(index + 1).toString.pad(shortTablePadding)}${player.gameUsername.pad(tablePadding)}${role.toString.pad(shortTablePadding)}$ratingStr"
+          val ratingStr = role.toMatchRole.map(player.conservativeRatingToString).getOrElse("").pad(shortTablePadding)
+          s"${(index + 1).toString.pad(indexPadding)}${player.gameUsername.pad(tablePadding)}${role.toString.pad(shortTablePadding)}$ratingStr"
       }
-      val queueSize = s"Queue (${allPlayersStrings.length})".pad(shortTablePadding)
+      val queueSize = s"Queue (${allPlayersStrings.length})".pad(tablePadding)
       val watchersSize = s"Watchers (${queueService.getWatchers.length})".pad(tablePadding)
-      val header = s"${"#".pad(shortTablePadding)}${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}${"Rating".pad(shortTablePadding)}"
+      val header = s"${"#".pad(indexPadding)}${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}${"Rating".pad(shortTablePadding)}"
       val playersString = allPlayersStrings.mkString(s"```$queueSize$watchersSize\n$header\n\n", "\n", "```")
       m.textChannel.sendMessage(playersString)
     })
 
   val HelpString = "help"
   val help: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .named(userCommandSymbols, Seq(HelpString))
+    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .named(Seq(userCommandsSymbol), Seq(HelpString))
     .parsing[Option[String]](MessageParser.optional)
     .withRequest(implicit m => {
       val symbolStr = userCommandSymbols.head
@@ -310,5 +360,5 @@ class UserCommands(config: Config,
       m.textChannel.sendMessage(helpText)
     })
 
-  val commandList = Seq(registered, history, watch, register, info, join, leave, show, leaderboard, help)
+  val commandList = Seq(registered, history, watch, register, info, join, leave, show, leaderboard, help, suados)
 }
