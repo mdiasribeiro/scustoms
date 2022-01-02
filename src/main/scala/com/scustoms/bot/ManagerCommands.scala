@@ -61,7 +61,7 @@ class ManagerCommands(config: Config,
         case (Some(userId), Some(role)) =>
           OptFuture.fromFuture(playerService.find(userId)).map {
             case Some(player) =>
-              queueService.addPlayer(QueueService.QueuedPlayer(role, player))
+              queueService.upsertPlayer(QueueService.QueuedPlayer(role, player))
               DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed._1} was added to the queue with role: $role")
             case None =>
               DiscordUtils.reactAndRespond(negativeMark, s"${command.parsed._1} could not be found. Make sure he is registered.")
@@ -85,8 +85,6 @@ class ManagerCommands(config: Config,
       val ongoingMatch = matchService.ongoingMatch
       (parsedUserId1, parsedUserId2, ongoingMatch) match {
         case (Some(userId1), Some(userId2), Some(ongoingMatch)) =>
-          queueService.remove(userId1)
-          queueService.remove(userId2)
           val result = (ongoingMatch.contains(userId1), ongoingMatch.contains(userId2)) match {
             case (true, true) =>
               Future.successful(matchService.swapPlayers(userId1, userId2))
@@ -100,7 +98,8 @@ class ManagerCommands(config: Config,
           OptFuture.fromFuture(result).map {
             case Some(newMatch) =>
               matchService.ongoingMatch = Some(newMatch)
-              val msg = DiscordUtils.ongoingMatchToString(newMatch, "TEAM 1", "TEAM 2", tablePadding)
+              val remainingPlayers = queueService.remaining(newMatch)
+              val msg = DiscordUtils.ongoingMatchToString(newMatch, remainingPlayers, tablePadding)
               DiscordUtils.reactAndRespond(positiveMark, msg)
             case None =>
               DiscordUtils.reactAndRespond(negativeMark, s"At least one player could not be found")
@@ -135,20 +134,15 @@ class ManagerCommands(config: Config,
     .named(managerCommandSymbols, Seq(StartString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(implicit m => {
-      matchService.ongoingMatch match {
-        case Some(_) =>
-          DiscordUtils.reactAndRespond(negativeMark, s"A match is already on-going. Finish that one before starting another.")
-        case None =>
-          try {
-            val startingMatch = RatingUtils.calculateRoleMatch(queueService.getQueue)
-            matchService.ongoingMatch = Some(startingMatch)
-            queueService.clear()
-            val msg = DiscordUtils.ongoingMatchToString(startingMatch, "TEAM 1", "TEAM 2", tablePadding)
-            client.requestsHelper.run(m.textChannel.sendMessage(msg)).map(_ => ())
-          } catch {
-            case err: Exception =>
-              DiscordUtils.reactAndRespond(negativeMark, s"Error: ${err.getMessage}")
-          }
+      try {
+        val startingMatch = RatingUtils.calculateRoleMatch(queueService.getQueue)
+        matchService.ongoingMatch = Some(startingMatch)
+        val remainingPlayers = queueService.remaining(startingMatch)
+        val msg = DiscordUtils.ongoingMatchToString(startingMatch, remainingPlayers, tablePadding)
+        client.requestsHelper.run(m.textChannel.sendMessage(msg)).map(_ => ())
+      } catch {
+        case err: Exception =>
+          DiscordUtils.reactAndRespond(negativeMark, s"Error: ${err.getMessage}")
       }
     })
 
@@ -161,7 +155,9 @@ class ManagerCommands(config: Config,
       matchService.ongoingMatch match {
         case Some(_) =>
           matchService.ongoingMatch = None
-          DiscordUtils.reactAndRespond(positiveMark, s"Match was aborted. Please join the queue again.")
+          queueService.clearPlayers()
+          val mention = StaticReferences.customsRoleId.resolve.map(_.mention).getOrElse("Players")
+          DiscordUtils.reactAndRespond(positiveMark, s"Match was aborted. $mention, join the queue again.")
         case None =>
           DiscordUtils.reactAndRespond(negativeMark, s"There is no on-going match to abort.")
       }
@@ -235,6 +231,7 @@ class ManagerCommands(config: Config,
         case (None, _) =>
           DiscordUtils.reactAndRespond(negativeMark, "Team number is not valid. Must be 1 or 2.")
         case (Some(team1Won), Some(ongoingMatch)) =>
+          queueService.clearPlayers()
           matchService.ongoingMatch = None
           val completeMatch = RatingUtils.calculate(ongoingMatch, team1Won)
           val update = matchService.insertAndUpdate(completeMatch)

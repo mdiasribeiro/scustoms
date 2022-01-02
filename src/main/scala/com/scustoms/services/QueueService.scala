@@ -1,7 +1,7 @@
 package com.scustoms.services
 
 import ackcord.data.UserId
-import com.scustoms.services.MatchService.{MatchPlayer, MatchRole}
+import com.scustoms.services.MatchService.{MatchPlayer, MatchRole, OngoingMatch}
 import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService.QueuedPlayer
 
@@ -57,27 +57,17 @@ class QueueService {
 
   def getWatchers: Seq[UserId] = watchers
 
-  def addPlayer(player: QueuedPlayer): Boolean =
-    if (this.contains(player.stats.discordId)) {
-      false
-    } else {
-      queue = queue.appended(player)
-      true
-    }
-
   def upsertPlayer(player: QueuedPlayer): Boolean = {
     val res = this.remove(player.stats.discordId)
     queue = queue.appended(player)
     res
   }
 
-  def addWatcher(userId: UserId): Boolean =
-    if (this.contains(userId)) {
-      false
-    } else {
-      watchers = watchers.appended(userId)
-      true
-    }
+  def upsertWatcher(userId: UserId): Boolean = {
+    val res = this.remove(userId)
+    watchers = watchers.appended(userId)
+    res
+  }
 
   def remove(playerId: UserId): Boolean =
     if (this.contains(playerId)) {
@@ -103,5 +93,12 @@ class QueueService {
     clearWatchers()
   }
 
-  def length: Int = queue.length
+  def queueSize: Int = queue.length
+
+  def watchersSize: Int = watchers.length
+
+  def remaining(o: OngoingMatch): Seq[QueuedPlayer] = {
+    val inGamePlayers = o.team1.seq ++ o.team2.seq
+    getQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.stats.discordId))
+  }
 }

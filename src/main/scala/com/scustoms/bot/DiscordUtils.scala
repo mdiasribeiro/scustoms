@@ -4,15 +4,16 @@ import ackcord.commands.{CommandError, CommandFunction, GuildCommandMessage, Gui
 import ackcord.data.{Guild, GuildMember, RoleId, TextGuildChannelId, UserId}
 import ackcord.requests.CreateReaction
 import ackcord.syntax.TextChannelSyntax
-import ackcord.{CacheSnapshot, DiscordClient, OptFuture}
+import ackcord.{DiscordClient, OptFuture}
 import akka.NotUsed
 import akka.stream.scaladsl.Flow
-import com.scustoms.services.MatchService
+import com.scustoms.services.{MatchService, QueueService}
 
 import scala.concurrent.ExecutionContext
 import com.scustoms.Utils.StringImprovements
 import com.scustoms.Utils.SeqImprovements
 import com.scustoms.services.PlayerService.PlayerWithStatistics
+import com.scustoms.services.QueueService.QueuedPlayer
 import com.scustoms.trueskill.RatingUtils.percentageFormat
 
 object DiscordUtils {
@@ -33,7 +34,7 @@ object DiscordUtils {
     client.requestsHelper.runMany(react, respond)(command.cache).map(_ => ())
   }
 
-  def playersToStrings(team: MatchService.MatchTeam, columnSize: Int)(implicit c: CacheSnapshot): Seq[String] = {
+  def playersToStrings(team: MatchService.MatchTeam, columnSize: Int): Seq[String] = {
     team.seq.map {
       case MatchService.MatchPlayer(role, player) =>
         val username = player.gameUsername.pad(columnSize)
@@ -44,12 +45,22 @@ object DiscordUtils {
     }
   }
 
-  def ongoingMatchToString(m: MatchService.OngoingMatch, teamA: String, teamB: String, columnSize: Int)(implicit c: CacheSnapshot): String = {
+  def remainingToStrings(r: Seq[QueuedPlayer], columnSize: Int): Seq[String] = {
+    r.map {
+      case QueueService.QueuedPlayer(role, player) =>
+        val username = player.gameUsername.pad(columnSize)
+        val roleStr = role.toString.pad(columnSize)
+        s"$username$roleStr"
+    }
+  }
+
+  def ongoingMatchToString(m: MatchService.OngoingMatch, remainingPlayers: Seq[QueuedPlayer], columnSize: Int): String = {
     val header = s"${"Role".pad(columnSize)}${"M. Rating".pad(columnSize)}${"C. Rating".pad(columnSize)}"
-    val teamAPlayers = playersToStrings(m.team1, columnSize).mkString(s"\n${teamA.pad(columnSize)}$header\n", "\n", "")
-    val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n${teamB.pad(columnSize)}$header\n", "\n", "")
+    val teamAPlayers = playersToStrings(m.team1, columnSize).mkString(s"\n${"TEAM 1".pad(columnSize)}$header\n", "\n", "")
+    val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n${"TEAM 2".pad(columnSize)}$header\n", "\n", "")
+    val remaining = remainingToStrings(remainingPlayers, columnSize).mkString(s"\n${"REMAINING".pad(columnSize)}${"Role".pad(columnSize)}\n", "\n", "")
     val quality = percentageFormat(m.quality * 100)
-    s"```Match quality: $quality%\n$teamAPlayers\n$teamBPlayers```"
+    s"```Match quality: $quality%\n$teamAPlayers\n$teamBPlayers\n$remaining```"
   }
 
   def playerToString(p: PlayerWithStatistics, tablePadding: Int): String = {

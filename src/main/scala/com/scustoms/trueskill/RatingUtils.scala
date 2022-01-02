@@ -19,23 +19,23 @@ object RatingUtils {
     ResolvedMatch(team1Won, updatedTeam1, updatedTeam2)
   }
 
-  private def findLaneMatch(player1: MatchPlayer, others: Seq[MatchPlayer]): LaneMatchUp = {
+  private def findLaneMatch(player1: MatchPlayer, others: Seq[MatchPlayer]): Option[LaneMatchUp] = {
     others.map { player2 =>
       val matchUp = TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, player1, player2)
       LaneMatchUp(matchUp, player1, player2)
-    }.maxBy(_.quality)
+    }.maxByOption(_.quality)
   }
 
-  private def matchLane(players: Seq[MatchPlayer]): LaneMatchUp = {
-    players.zipWithIndex.map {
+  private def matchLane(players: Seq[MatchPlayer]): Option[LaneMatchUp] = {
+    players.zipWithIndex.flatMap {
       case (player, index) =>
         findLaneMatch(player, players.drop(index + 1))
-    }.maxBy(_.quality)
+    }.maxByOption(_.quality)
   }
 
   def tryMatch(rolePlayers: Seq[MatchPlayer], fillPlayers: Seq[QueuedPlayer], role: MatchRole): Option[(LaneMatchUp, Seq[QueuedPlayer])] = {
     if (rolePlayers.length + fillPlayers.length >= 2) {
-      val bestMatchUp = rolePlayers.length match {
+      val bestMatchUpOpt = rolePlayers.length match {
         case 0 =>
           val convertedFillPlayers = fillPlayers.map(_.toMatchPlayer(role))
           matchLane(convertedFillPlayers)
@@ -46,10 +46,12 @@ object RatingUtils {
           matchLane(rolePlayers)
       }
 
-      val remainingPlayers = (rolePlayers.map(_.toQueuedPlayer(QueueService.Fill)) ++ fillPlayers).filterNot(p =>
-        p.stats.discordId == bestMatchUp.player1.state.discordId || p.stats.discordId == bestMatchUp.player2.state.discordId)
+      bestMatchUpOpt.map(bestMatchUp => {
+        val remainingPlayers = (rolePlayers.map(_.toQueuedPlayer(QueueService.Fill)) ++ fillPlayers).filterNot(p =>
+          p.stats.discordId == bestMatchUp.player1.state.discordId || p.stats.discordId == bestMatchUp.player2.state.discordId)
 
-      Some((bestMatchUp, remainingPlayers))
+        (bestMatchUp, remainingPlayers)
+      })
     } else {
       None
     }

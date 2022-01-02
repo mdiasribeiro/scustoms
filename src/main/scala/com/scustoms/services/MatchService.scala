@@ -48,6 +48,11 @@ object MatchService {
       val score = TwoTeamCalculator.calculateMatchQuality(RatingUtils.defaultGameInfo, m.teamA, m.teamB)
       OngoingMatch(score, m.teamA, m.teamB)
     }
+
+    def fromTeams(teamA: MatchTeam, teamB: MatchTeam): OngoingMatch = {
+      val matchQuality = TwoTeamCalculator.calculateMatchQuality(defaultGameInfo, teamA, teamB)
+      OngoingMatch(matchQuality, teamA, teamB)
+    }
   }
   case class OngoingMatch(quality: Double, team1: MatchTeam, team2: MatchTeam) {
     def contains(userId: UserId): Boolean = {
@@ -118,44 +123,41 @@ class MatchService(matchKeeper: MatchKeeper, playerService: PlayerService)(impli
 
   var ongoingMatch: Option[OngoingMatch] = None
 
+  def clearMatch(): Boolean = {
+    val existed = ongoingMatch.isDefined
+    ongoingMatch = None
+    existed
+  }
+
   def swapPlayers(userId1: UserId, userId2: UserId): Option[OngoingMatch] = {
     ongoingMatch.flatMap(m => {
-      val newTeams = (m.find(userId1), m.find(userId2)) match {
+      (m.find(userId1), m.find(userId2)) match {
         case (Some((p1, p1team)), Some((p2, p2team))) =>
-          if (p1team == p2team) {
+          val (teamA, teamB) = if (p1team == p2team) {
             val teamA = m.getTeam(p1team).swapPlayer(p1.role, p2.state).swapPlayer(p2.role, p1.state)
             val teamB = m.getTeam(!p1team)
-            if (p1team) Some((teamA, teamB)) else Some((teamB, teamA))
+            (teamA, teamB)
           } else {
             val teamA = m.getTeam(p1team).swapPlayer(p1.role, p2.state)
             val teamB = m.getTeam(p2team).swapPlayer(p2.role, p1.state)
-            if (p1team) Some((teamA, teamB)) else Some((teamB, teamA))
+            (teamA, teamB)
           }
+          if (p1team) Some(OngoingMatch.fromTeams(teamA, teamB)) else Some(OngoingMatch.fromTeams(teamB, teamA))
         case _ =>
           None
-      }
-      newTeams.map {
-        case (teamA, teamB) =>
-          val matchQuality = TwoTeamCalculator.calculateMatchQuality(defaultGameInfo, teamA, teamB)
-          OngoingMatch(matchQuality, teamA, teamB)
       }
     })
   }
 
   def swapPlayer(userId1: UserId, otherPlayer: PlayerWithStatistics): Option[OngoingMatch] = {
     ongoingMatch.flatMap(m => {
-      val newTeams = m.find(userId1) match {
+      m.find(userId1) match {
         case Some((p1, p1team)) =>
           val teamA = m.getTeam(p1team).swapPlayer(p1.role, otherPlayer)
           val teamB = m.getTeam(!p1team)
-          if (p1team) Some((teamA, teamB)) else Some((teamB, teamA))
+          if (p1team) Some(OngoingMatch.fromTeams(teamA, teamB)) else Some(OngoingMatch.fromTeams(teamB, teamA))
         case _ =>
           None
-      }
-      newTeams.map {
-        case (teamA, teamB) =>
-          val matchQuality = TwoTeamCalculator.calculateMatchQuality(defaultGameInfo, teamA, teamB)
-          OngoingMatch(matchQuality, teamA, teamB)
       }
     })
   }

@@ -194,7 +194,7 @@ class UserCommands(config: Config,
         case Right(_) =>
           val changeRole = AddGuildMemberRole(m.guild.id, m.user.id, StaticReferences.customsRoleId)
           val react = CreateReaction(m.textChannel.id, m.message.id, positiveMark)
-          val respond = m.textChannel.sendMessage(s"Player '${m.user.username}' successfully added")
+          val respond = m.textChannel.sendMessage(s"${m.user.mention} you have been successfully registered. Say `$$help` to learn about actions you can take.")
           client.requestsHelper.runMany(react, respond, changeRole).map(_ => ())
         case Left(PlayerKeeper.PlayerAlreadyExists) =>
           DiscordUtils.reactAndRespond(negativeMark, s"Player '${m.user.username}' already exists")
@@ -227,7 +227,7 @@ class UserCommands(config: Config,
       OptFuture.fromFuture(result).map {
         case Right(queuedPlayer) =>
           queueService.upsertPlayer(queuedPlayer)
-          val message = s"${command.user.mention} joined the queue (role: ${queuedPlayer.role}). Current queue size: ${queueService.length}"
+          val message = s"${command.user.mention} joined the queue (role: ${queuedPlayer.role}). Current queue size: ${queueService.queueSize}"
           DiscordUtils.reactAndRespond(positiveMark, message)
         case Left(error) =>
           DiscordUtils.reactAndRespond(negativeMark, error.message)
@@ -240,9 +240,9 @@ class UserCommands(config: Config,
     .named(userCommandSymbols, Seq(LeaveString))
     .asyncOpt(implicit command =>
       if (queueService.remove(command.user.id))
-        DiscordUtils.reactAndRespond(positiveMark, s"${command.user.mention} left the game or watchers queue. Current queue size: ${queueService.length}")
+        DiscordUtils.reactAndRespond(positiveMark, s"${command.user.mention} left the game or watchers queue. Current queue size: ${queueService.queueSize}")
       else
-        DiscordUtils.reactAndRespond(negativeMark, "You are not in the queue")
+        DiscordUtils.reactAndRespond(negativeMark, "You are not watching or in the queue")
     )
 
   val WatchString = "watch"
@@ -250,12 +250,10 @@ class UserCommands(config: Config,
     .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(WatchString))
     .asyncOpt(implicit command => {
-      if (queueService.contains(command.user.id)) {
-        DiscordUtils.reactAndRespond(negativeMark, "You are already in the queue")
-      } else if (matchService.contains(command.user.id)) {
+      if (matchService.contains(command.user.id)) {
         DiscordUtils.reactAndRespond(negativeMark, "You are already in a match")
       } else {
-        queueService.addWatcher(command.user.id)
+        queueService.upsertWatcher(command.user.id)
         val message = s"${command.user.mention} joined the watchers. You will now be pulled into voice rooms on games."
         DiscordUtils.reactAndRespond(positiveMark, message)
       }
@@ -274,7 +272,7 @@ class UserCommands(config: Config,
           s"${(index + 1).toString.pad(indexPadding)}${player.gameUsername.pad(tablePadding)}${role.toString.pad(shortTablePadding)}$ratingStr"
       }
       val queueSize = s"Queue (${allPlayersStrings.length})".pad(tablePadding)
-      val watchersSize = s"Watchers (${queueService.getWatchers.length})".pad(tablePadding)
+      val watchersSize = s"Watchers (${queueService.watchersSize})".pad(tablePadding)
       val header = s"${"#".pad(indexPadding)}${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}${"Rating".pad(shortTablePadding)}"
       val playersString = allPlayersStrings.mkString(s"```$queueSize$watchersSize\n$header\n\n", "\n", "```")
       m.textChannel.sendMessage(playersString)
