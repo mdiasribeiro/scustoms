@@ -90,7 +90,7 @@ class UserCommands(config: Config,
       OptFuture.fromFuture(playerService.getAllPlayers).flatMap {
         players =>
           val playerStrings = players
-            .filter(_.totalGames > 0)
+            .filter(_.totalGames > 5)
             .flatMap(p => p.getBestStatistics.map(bestStats => {
               val rating = bestStats._2.rating
               BestStatistics(rating.getConservativeRating, rating.getMean, bestStats._1, p)
