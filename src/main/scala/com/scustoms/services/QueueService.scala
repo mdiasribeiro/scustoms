@@ -1,8 +1,8 @@
 package com.scustoms.services
 
 import ackcord.data.UserId
-import com.scustoms.services.MatchService.{MatchPlayer, MatchRole, OngoingMatch}
-import com.scustoms.services.PlayerService.PlayerWithStatistics
+import com.scustoms.database.keepers.PlayerKeeper.StoredPlayer
+import com.scustoms.services.MatchService.{MatchRole, OngoingMatch}
 import com.scustoms.services.QueueService.QueuedPlayer
 
 object QueueService {
@@ -42,9 +42,8 @@ object QueueService {
     case _                   => None
   }
 
-  case class QueuedPlayer(role: QueueRole, stats: PlayerWithStatistics) {
-    def toMatchPlayer(role: MatchRole): MatchPlayer = MatchPlayer(role, stats)
-    def discordId: UserId = stats.discordId
+  case class QueuedPlayer(role: QueueRole, player: StoredPlayer) {
+    def discordId: UserId = player.discordId
   }
 }
 
@@ -58,7 +57,7 @@ class QueueService {
   def getWatchers: Seq[UserId] = watchers
 
   def upsertPlayer(player: QueuedPlayer): Boolean = {
-    val res = this.remove(player.stats.discordId)
+    val res = this.remove(player.player.discordId)
     queue = queue.appended(player)
     res
   }
@@ -71,14 +70,14 @@ class QueueService {
 
   def remove(playerId: UserId): Boolean =
     if (this.contains(playerId)) {
-      queue = queue.filterNot(_.stats.discordId == playerId)
+      queue = queue.filterNot(_.player.discordId == playerId)
       watchers = watchers.filterNot(_ == playerId)
       true
     } else {
       false
     }
 
-  def containsPlayer(playerId: UserId): Boolean = queue.exists(_.stats.discordId == playerId)
+  def containsPlayer(playerId: UserId): Boolean = queue.exists(_.player.discordId == playerId)
 
   def containsWatcher(watcherId: UserId): Boolean = watchers.contains(watcherId)
 
@@ -99,6 +98,6 @@ class QueueService {
 
   def remaining(o: OngoingMatch): Seq[QueuedPlayer] = {
     val inGamePlayers = o.team1.seq ++ o.team2.seq
-    getQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.stats.discordId))
+    getQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.player.discordId))
   }
 }

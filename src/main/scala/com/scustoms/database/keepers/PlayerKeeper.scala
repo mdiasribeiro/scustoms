@@ -10,8 +10,12 @@ import slick.lifted.ProvenShape
 
 object PlayerKeeper {
   sealed trait PlayerDatabaseError extends DatabaseError
-  final case object PlayerAlreadyExists extends PlayerDatabaseError
-  final case object PlayerNotFound extends PlayerDatabaseError
+  final case object PlayerAlreadyExists extends PlayerDatabaseError {
+    def message: String = "Player already exists in the database"
+  }
+  final case object PlayerNotFound extends PlayerDatabaseError {
+    def message: String = "Player could not be found in the database"
+  }
 
   type PlayerTableTuple = (Long, Long, String, String, Long, Long, Long, Long, Long)
 
@@ -59,12 +63,15 @@ class PlayerKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionConte
       .map(_.map(StoredPlayer.fromTuple))
   }
 
-  def find(discordId: UserId): Future[Option[StoredPlayer]] = databaseManager.run {
+  def find(discordId: UserId): Future[Either[PlayerDatabaseError, StoredPlayer]] = databaseManager.run {
     playersTable
       .filter(p => p.discordId === discordId.toUnsignedLong)
       .result
       .headOption
-      .map(_.map(StoredPlayer.fromTuple))
+      .map {
+        case Some(playerTuple) => Right(StoredPlayer.fromTuple(playerTuple))
+        case None => Left(PlayerNotFound)
+      }
   }
 
   def findAll(playerIds: Seq[UserId]): Future[Either[DatabaseError, Seq[StoredPlayer]]] = databaseManager.run {
@@ -87,10 +94,11 @@ class PlayerKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionConte
       .result
   }
 
-  def updateGameUsername(discordId: UserId, gameUsername: String): Future[Int] = databaseManager.runTransaction {
+  def updateGameUsername(discordId: UserId, gameUsername: String): Future[Boolean] = databaseManager.runTransaction {
     playersTable
       .filter(p => p.discordId === discordId.toUnsignedLong)
       .map(p => p.gameUsername)
       .update(gameUsername)
+      .map(_ > 0)
   }
 }

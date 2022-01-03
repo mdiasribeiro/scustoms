@@ -1,6 +1,7 @@
 package com.scustoms.trueskill
 
 import com.scustoms.services.MatchService._
+import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.{MatchService, QueueService}
 import com.scustoms.services.QueueService.QueuedPlayer
 import de.gesundkrank.jskills.GameInfo
@@ -33,7 +34,7 @@ object RatingUtils {
     }.maxByOption(_.quality)
   }
 
-  def tryMatch(rolePlayers: Seq[MatchPlayer], fillPlayers: Seq[QueuedPlayer], role: MatchRole): Option[(LaneMatchUp, Seq[QueuedPlayer])] = {
+  def tryMatch(rolePlayers: Seq[MatchPlayer], fillPlayers: Seq[PlayerWithStatistics], role: MatchRole): Option[(LaneMatchUp, Seq[PlayerWithStatistics])] = {
     if (rolePlayers.length + fillPlayers.length >= 2) {
       val bestMatchUpOpt = rolePlayers.length match {
         case 0 =>
@@ -47,8 +48,8 @@ object RatingUtils {
       }
 
       bestMatchUpOpt.map(bestMatchUp => {
-        val remainingPlayers = (rolePlayers.map(_.toQueuedPlayer(QueueService.Fill)) ++ fillPlayers).filterNot(p =>
-          p.stats.discordId == bestMatchUp.player1.state.discordId || p.stats.discordId == bestMatchUp.player2.state.discordId)
+        val remainingPlayers = (rolePlayers.map(_.state) ++ fillPlayers).filterNot(p =>
+          p.discordId == bestMatchUp.player1.state.discordId || p.discordId == bestMatchUp.player2.state.discordId)
 
         (bestMatchUp, remainingPlayers)
       })
@@ -82,17 +83,17 @@ object RatingUtils {
     allMatches.maxBy(_.quality)
   }
 
-  def calculateRoleMatch(players: Seq[QueuedPlayer]): OngoingMatch = {
-    require(players.length >= 10, NotEnoughPlayers)
+  def calculateRoleMatch(rolePlayers: Seq[MatchPlayer], fillQueuedPlayers: Seq[PlayerWithStatistics]): OngoingMatch = {
+    require(rolePlayers.length + fillQueuedPlayers.length >= 10, NotEnoughPlayers)
 
-    val playersByRole = players.groupBy(_.role)
+    val playersByRole = rolePlayers.groupBy(_.role)
 
-    val topPlayers = playersByRole.getOrElse(QueueService.Top, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Top))
-    val junglePlayers = playersByRole.getOrElse(QueueService.Jungle, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Jungle))
-    val midPlayers = playersByRole.getOrElse(QueueService.Mid, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Mid))
-    val botPlayers = playersByRole.getOrElse(QueueService.Bot, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Bot))
-    val supportPlayers = playersByRole.getOrElse(QueueService.Support, Seq.empty[QueuedPlayer]).map(_.toMatchPlayer(MatchService.Support))
-    var fillPlayers = playersByRole.getOrElse(QueueService.Fill, Seq.empty[QueuedPlayer])
+    val topPlayers = playersByRole.getOrElse(MatchService.Top, Seq.empty[MatchPlayer])
+    val junglePlayers = playersByRole.getOrElse(MatchService.Jungle, Seq.empty[MatchPlayer])
+    val midPlayers = playersByRole.getOrElse(MatchService.Mid, Seq.empty[MatchPlayer])
+    val botPlayers = playersByRole.getOrElse(MatchService.Bot, Seq.empty[MatchPlayer])
+    val supportPlayers = playersByRole.getOrElse(MatchService.Support, Seq.empty[MatchPlayer])
+    var fillPlayers = fillQueuedPlayers
 
     var topMatchUp: Option[LaneMatchUp] = None
     var jungleMatchUp: Option[LaneMatchUp] = None

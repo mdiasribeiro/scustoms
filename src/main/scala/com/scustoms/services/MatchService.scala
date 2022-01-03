@@ -40,7 +40,7 @@ object MatchService {
     def updatedRating(newRating: Rating, won: Boolean): MatchPlayer =
       this.copy(state = state.updatedRating(role, newRating, won))
 
-    def toQueuedPlayer(role: QueueRole): QueuedPlayer = QueuedPlayer(role, state)
+    def toQueuedPlayer(role: QueueRole): QueuedPlayer = QueuedPlayer(role, state.toStoredPlayer)
   }
 
   object OngoingMatch {
@@ -234,11 +234,11 @@ class MatchService(matchKeeper: MatchKeeper, playerService: PlayerService)(impli
 
   def resolveTeam(team: StoredMatchTeam): Future[Option[MatchTeam]] =
     for {
-      topResult <- playerService.find(team.topId)
-      jungleResult <- playerService.find(team.jungleId)
-      midResult <- playerService.find(team.midId)
-      botResult <- playerService.find(team.botId)
-      supportResult <- playerService.find(team.supportId)
+      topResult <- playerService.findAndResolve(team.topId)
+      jungleResult <- playerService.findAndResolve(team.jungleId)
+      midResult <- playerService.findAndResolve(team.midId)
+      botResult <- playerService.findAndResolve(team.botId)
+      supportResult <- playerService.findAndResolve(team.supportId)
     } yield (topResult, jungleResult, midResult, botResult, supportResult) match {
       case (Some(top), Some(jungle), Some(mid), Some(bot), Some(support)) =>
         Some(MatchTeam(

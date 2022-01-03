@@ -69,7 +69,7 @@ class UserCommands(config: Config,
         .getOrElse(Some(userCommandMessage.user.id))
       playerIdOpt match {
         case Some(playerId) =>
-          OptFuture.fromFuture(playerService.find(playerId)).flatMap {
+          OptFuture.fromFuture(playerService.findAndResolve(playerId)).flatMap {
             case Some(player) =>
               val message = DiscordUtils.playerToString(player, shortTablePadding)
               DiscordUtils.reactAndRespond(positiveMark, message)
@@ -265,16 +265,14 @@ class UserCommands(config: Config,
     .named(userCommandSymbols, Seq(ShowString))
     .withRequest(implicit m => {
       val allPlayersStrings = queueService.getQueue.zipWithIndex.map {
-        case (QueuedPlayer(QueueService.Fill, player), index) =>
-          s"${(index + 1).toString.pad(indexPadding)}${player.gameUsername.pad(tablePadding)}${QueueService.Fill.toString.pad(shortTablePadding)}"
         case (QueuedPlayer(role, player), index) =>
-          val ratingStr = role.toMatchRole.map(player.conservativeRatingToString).getOrElse("").pad(shortTablePadding)
-          s"${(index + 1).toString.pad(indexPadding)}${player.gameUsername.pad(tablePadding)}${role.toString.pad(shortTablePadding)}$ratingStr"
+          s"${(index + 1).toString.pad(indexPadding)}${player.gameUsername.pad(tablePadding)}${role.toString.pad(shortTablePadding)}"
       }
       val queueSize = s"Queue (${allPlayersStrings.length})".pad(tablePadding)
       val watchersSize = s"Watchers (${queueService.watchersSize})".pad(tablePadding)
-      val header = s"${"#".pad(indexPadding)}${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}${"Rating".pad(shortTablePadding)}"
-      val playersString = allPlayersStrings.mkString(s"```$queueSize$watchersSize\n$header\n\n", "\n", "```")
+      val preHeader = s"${"".pad(indexPadding)}$queueSize$watchersSize"
+      val header = s"${"#".pad(indexPadding)}${"Username".pad(tablePadding)}${"Role".pad(tablePadding)}"
+      val playersString = allPlayersStrings.mkString(s"```$preHeader\n$header\n\n", "\n", "```")
       m.textChannel.sendMessage(playersString)
     })
 

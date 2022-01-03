@@ -89,9 +89,9 @@ class ManagerCommands(config: Config,
             case (true, true) =>
               Future.successful(matchService.swapPlayers(userId1, userId2))
             case (true, false) =>
-              playerService.find(userId2).map(_.flatMap(player2Data => matchService.swapPlayer(userId1, player2Data)))
+              playerService.findAndResolve(userId2).map(_.flatMap(player2Data => matchService.swapPlayer(userId1, player2Data)))
             case (false, true) =>
-              playerService.find(userId1).map(_.flatMap(player1Data => matchService.swapPlayer(userId2, player1Data)))
+              playerService.findAndResolve(userId1).map(_.flatMap(player1Data => matchService.swapPlayer(userId2, player1Data)))
             case (false, false) =>
               Future.successful(None)
           }
@@ -135,6 +135,8 @@ class ManagerCommands(config: Config,
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(implicit m => {
       try {
+        val (fillPlayers, rolePlayers) = queueService.getQueue.partition(_.role == QueueService.Fill)
+        val resolvedRolePlayers = rolePlayers.map(p => playerService.resolvePlayer(p.player))
         val startingMatch = RatingUtils.calculateRoleMatch(queueService.getQueue)
         matchService.ongoingMatch = Some(startingMatch)
         val remainingPlayers = queueService.remaining(startingMatch)

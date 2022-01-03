@@ -3,8 +3,8 @@ package com.scustoms.services
 import ackcord.data.UserId
 import com.scustoms.Utils
 import com.scustoms.database.DatabaseManager.DatabaseError
-import com.scustoms.database.keepers.PlayerKeeper.{PlayerAlreadyExists, StoredPlayer}
-import com.scustoms.database.keepers.PlayerStatisticsKeeper.PlayerStatistics
+import com.scustoms.database.keepers.PlayerKeeper.{PlayerAlreadyExists, PlayerDatabaseError, PlayerNotFound, StoredPlayer}
+import com.scustoms.database.keepers.PlayerStatisticsKeeper.{PlayerStatistics, PlayerStatisticsDatabaseError}
 import com.scustoms.database.keepers.{PlayerKeeper, PlayerStatisticsKeeper}
 import com.scustoms.services.MatchService.{MatchPlayer, MatchRole}
 import com.scustoms.trueskill.RatingUtils
@@ -86,7 +86,7 @@ class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerSt
   def update(statistics: PlayerStatistics): Future[Int] =
     playerStatisticsKeeper.update(statistics)
 
-  def updateGameUsername(playerId: UserId, username: String): Future[Either[DatabaseError, Int]] = {
+  def updateGameUsername(playerId: UserId, username: String): Future[Either[PlayerDatabaseError, Boolean]] = {
     exists(playerId).flatMap {
       case true =>
         playerKeeper.updateGameUsername(playerId, username).map(Right(_))
@@ -97,7 +97,7 @@ class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerSt
 
   def exists(discordId: UserId): Future[Boolean] = playerKeeper.exists(discordId)
 
-  def resolvePlayer(player: PlayerKeeper.StoredPlayer): Future[Option[PlayerWithStatistics]] = {
+  def resolvePlayer(player: PlayerKeeper.StoredPlayer): Future[Either[PlayerStatisticsDatabaseError, PlayerWithStatistics]] = {
     for {
       topResult <- playerStatisticsKeeper.find(player.topStatsId)
       jungleResult <- playerStatisticsKeeper.find(player.jungleStatsId)
@@ -105,15 +105,23 @@ class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerSt
       botResult <- playerStatisticsKeeper.find(player.botStatsId)
       supportResult <- playerStatisticsKeeper.find(player.supportStatsId)
     } yield (topResult, jungleResult, midResult, botResult, supportResult) match {
-      case (Some(top), Some(jungle), Some(mid), Some(bot), Some(support)) =>
-        Some(PlayerWithStatistics(player.discordId, player.discordUsername, player.gameUsername, top, jungle, mid, bot, support))
+      case (Right(top), Right(jungle), Right(mid), Right(bot), Right(support)) =>
+        Right(PlayerWithStatistics(player.discordId, player.discordUsername, player.gameUsername, top, jungle, mid, bot, support))
       case _ =>
-        None
+        Left(PlayerStatisticsKeeper.StatisticsNotFound)
     }
   }
 
-  def find(discordId: UserId): Future[Option[PlayerWithStatistics]] = {
-    playerKeeper.find(discordId).flatMap {
+  def resolveAll(players: Seq[PlayerKeeper.StoredPlayer]): Future[Either[PlayerDatabaseError, Seq[PlayerWithStatistics]]] = {
+    for {
+      resolvedPlayers <- Future.sequence(players.map(foundPs => resolvePlayer(foundPs)))
+    } yield if (resolvedPlayers.contains(None)) Left(PlayerNotFound) else Right(resolvedPlayers.flatten)
+  }
+
+  def find(discordId: UserId): Future[Option[StoredPlayer]] = playerKeeper.find(discordId)
+
+  def findAndResolve(discordId: UserId): Future[Option[PlayerWithStatistics]] = {
+    find(discordId).flatMap {
       case Some(player) =>
         resolvePlayer(player)
       case None =>
@@ -121,7 +129,7 @@ class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerSt
     }
   }
 
-  def findAll(players: Seq[UserId]): Future[Either[DatabaseError, Seq[PlayerWithStatistics]]] = {
+  def findAndResolveAll(players: Seq[UserId]): Future[Either[PlayerDatabaseError, Seq[PlayerWithStatistics]]] = {
     for {
       foundAllResult <- playerKeeper.findAll(players)
       resolvedPlayerOpt <- Utils.foldEitherOfFutureSeq(foundAllResult.map(foundPs => foundPs.map(resolvePlayer)))
