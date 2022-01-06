@@ -82,6 +82,18 @@ object RatingUtils {
     allMatches.maxBy(_.quality)
   }
 
+  def reBalanceMatch(o: OngoingMatch): OngoingMatch = {
+    val MatchTeam(t1, j1, m1, b1, s1) = o.team1
+    val MatchTeam(t2, j2, m2, b2, s2) = o.team2
+    arrangeTeams(
+      LaneMatchUp(TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, t1, t2), t1, t2),
+      LaneMatchUp(TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, j1, j2), j1, j2),
+      LaneMatchUp(TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, m1, m2), m1, m2),
+      LaneMatchUp(TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, b1, b2), b1, b2),
+      LaneMatchUp(TwoPlayerCalculator.calculateLaneQuality(defaultGameInfo, s1, s2), s1, s2),
+    )
+  }
+
   def calculateRoleMatch(players: Seq[QueuedPlayer]): OngoingMatch = {
     require(players.length >= 10, NotEnoughPlayers)
 

@@ -15,6 +15,7 @@ libraryDependencies ++= Seq(
   "org.slf4j"                   %  "slf4j-simple"             % "1.7.32"
 )
 
+scalacOptions ++= Seq("-deprecation", "-feature")
 Compile / mainClass := Some("com.scustoms.Main")
 
 enablePlugins(JavaAppPackaging)

@@ -33,13 +33,13 @@ object QueueService {
   final case object Fill extends QueueRole { override def toMatchRole: Option[MatchRole] = None }
 
   def parseRole(role: String): Option[QueueRole] = role.toLowerCase match {
-    case "top"               => Some(Top)
-    case "jungle"            => Some(Jungle)
-    case "mid"               => Some(Mid)
-    case "bot"               => Some(Bot)
-    case "sup" | "support"   => Some(Support)
-    case "fill" | "any"      => Some(Fill)
-    case _                   => None
+    case "top"                        => Some(Top)
+    case "jun" | "jung" | "jungle"    => Some(Jungle)
+    case "mid"                        => Some(Mid)
+    case "bot" | "adc"                => Some(Bot)
+    case "sup" | "supp" | "support"   => Some(Support)
+    case "fill" | "any"               => Some(Fill)
+    case _                            => None
   }
 
   case class QueuedPlayer(role: QueueRole, stats: PlayerWithStatistics) {
@@ -51,11 +51,13 @@ object QueueService {
 class QueueService {
 
   private var queue: Seq[QueuedPlayer] = Seq.empty
-  private var watchers: Seq[UserId] = Seq.empty
+  private var priorityQueue: Seq[QueuedPlayer] = Seq.empty
 
   def getQueue: Seq[QueuedPlayer] = queue
 
-  def getWatchers: Seq[UserId] = watchers
+  def getRandomN(n: Int): Seq[QueuedPlayer] = Option.when(n > 0)(scala.util.Random.shuffle(queue).take(n)).getOrElse(Seq.empty)
+
+  def getPriorityQueue: Seq[QueuedPlayer] = priorityQueue
 
   def upsertPlayer(player: QueuedPlayer): Boolean = {
     val res = this.remove(player.stats.discordId)
@@ -63,16 +65,16 @@ class QueueService {
     res
   }
 
-  def upsertWatcher(userId: UserId): Boolean = {
-    val res = this.remove(userId)
-    watchers = watchers.appended(userId)
+  def upsertPriorityPlayer(player: QueuedPlayer): Boolean = {
+    val res = this.remove(player.stats.discordId)
+    priorityQueue = priorityQueue.appended(player)
     res
   }
 
   def remove(playerId: UserId): Boolean =
     if (this.contains(playerId)) {
       queue = queue.filterNot(_.stats.discordId == playerId)
-      watchers = watchers.filterNot(_ == playerId)
+      priorityQueue = priorityQueue.filterNot(_.stats.discordId == playerId)
       true
     } else {
       false
@@ -80,25 +82,41 @@ class QueueService {
 
   def containsPlayer(playerId: UserId): Boolean = queue.exists(_.stats.discordId == playerId)
 
-  def containsWatcher(watcherId: UserId): Boolean = watchers.contains(watcherId)
+  def containsPriorityPlayer(playerId: UserId): Boolean = priorityQueue.exists(_.stats.discordId == playerId)
 
-  def contains(userId: UserId): Boolean = containsPlayer(userId) || containsWatcher(userId)
+  def contains(userId: UserId): Boolean = containsPlayer(userId) || containsPriorityPlayer(userId)
 
-  def clearPlayers(): Unit = queue = Seq.empty
+  def clearNormalQueue(): Unit = queue = Seq.empty
 
-  def clearWatchers(): Unit = watchers = Seq.empty
+  def clearPriorityQueue(): Unit = priorityQueue = Seq.empty
 
-  def clear(): Unit = {
-    clearPlayers()
-    clearWatchers()
+  def clearAll(): Unit = {
+    clearNormalQueue()
+    clearPriorityQueue()
   }
 
   def queueSize: Int = queue.length
 
-  def watchersSize: Int = watchers.length
+  def priorityQueueSize: Int = priorityQueue.length
 
   def remaining(o: OngoingMatch): Seq[QueuedPlayer] = {
     val inGamePlayers = o.team1.seq ++ o.team2.seq
-    getQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.stats.discordId))
+    val prioPlayers = getPriorityQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.stats.discordId))
+    val queuePlayers = getQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.stats.discordId))
+    prioPlayers ++ queuePlayers
+  }
+
+  def findPlayer(userId: UserId): Option[QueuedPlayer] = {
+    queue.find(_.stats.discordId == userId)
+      .orElse(priorityQueue.find(_.stats.discordId == userId))
+  }
+
+  def getAll(players: Seq[UserId]): Seq[QueuedPlayer] = {
+    players.flatMap(p => findPlayer(p))
+  }
+
+  def updatePriorities(playingPlayers: Seq[MatchPlayer], remainingPlayers: Seq[QueuedPlayer]): Unit = {
+    getAll(playingPlayers.map(_.state.discordId)).map(p => upsertPlayer(p))
+    remainingPlayers.map(p => upsertPriorityPlayer(p))
   }
 }
