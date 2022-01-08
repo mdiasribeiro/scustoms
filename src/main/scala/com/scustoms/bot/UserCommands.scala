@@ -185,9 +185,7 @@ class UserCommands(config: Config,
     .named(userCommandSymbols, Seq(JoinString))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit command => {
-      val result: Future[Either[QueueError, QueuedPlayer]] = if (matchService.contains(command.user.id)) {
-        Future.successful(Left(PlayerAlreadyInMatch))
-      } else {
+      val result: Future[Either[QueueError, QueuedPlayer]] =
         playerService.find(command.user.id).map {
           case Some(player) =>
             command.parsed
@@ -198,13 +196,22 @@ class UserCommands(config: Config,
           case None =>
             Left(PlayerDoesNotExist)
         }
-      }
 
       OptFuture.fromFuture(result).map {
         case Right(queuedPlayer) =>
-          queueService.upsertPlayer(queuedPlayer)
-          val message = s"${command.user.mention} joined the queue (role: ${queuedPlayer.role}). Current queue size: ${queueService.queueSize + queueService.priorityQueueSize}"
-          DiscordUtils.reactAndRespond(positiveMark, message)
+          val isInPriorityQueue = queueService.containsPriorityPlayer(queuedPlayer.discordId)
+          val isInNormalQueue = queueService.containsNormalPlayer(queuedPlayer.discordId)
+          val message = if (isInPriorityQueue) {
+            queueService.upsertPriorityPlayer(queuedPlayer)
+            s"${command.user.mention} changed queued role to ${queuedPlayer.role}."
+          } else if (isInNormalQueue) {
+            queueService.upsertNormalPlayer(queuedPlayer)
+            s"${command.user.mention} changed queued role to ${queuedPlayer.role}."
+          } else {
+            queueService.upsertNormalPlayer(queuedPlayer)
+            s"${command.user.mention} joined the queue (${queuedPlayer.role}). Queue size: ${queueService.queueSize}"
+          }
+          DiscordUtils.respond(message)
         case Left(error) =>
           DiscordUtils.reactAndRespond(negativeMark, error.message)
       }
@@ -215,8 +222,10 @@ class UserCommands(config: Config,
     .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(LeaveString))
     .asyncOpt(implicit command =>
-      if (queueService.remove(command.user.id))
-        DiscordUtils.reactAndRespond(positiveMark, s"${command.user.mention} left the game or watchers queue. Current queue size: ${queueService.queueSize + queueService.priorityQueueSize}")
+      if (queueService.removeNormalPlayer(command.user.id))
+        DiscordUtils.reactAndRespond(positiveMark, s"${command.user.mention} left the queue. Queue size: ${queueService.queueSize}")
+      else if (queueService.removePriorityPlayer(command.user.id))
+        DiscordUtils.reactAndRespond(positiveMark, s"${command.user.mention} left the priority queue. Queue size: ${queueService.queueSize}")
       else
         DiscordUtils.reactAndRespond(negativeMark, "You are not watching or in the queue")
     )
@@ -236,7 +245,7 @@ class UserCommands(config: Config,
     .named(userCommandSymbols, Seq(ShowString))
     .withRequest(implicit m => {
       val prioPlayers = queuedPlayersToString(queueService.getPriorityQueue)
-      val normalPlayers = queuedPlayersToString(queueService.getQueue)
+      val normalPlayers = queuedPlayersToString(queueService.getNormalQueue)
       val header = s"${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}${"Rating".pad(shortTablePadding)}"
       val prioQueueBlock = prioPlayers.ifNonEmpty(
         s"""${s"Prio queue (${prioPlayers.length})".pad(tablePadding)}
@@ -294,7 +303,7 @@ class UserCommands(config: Config,
              |```""".stripMargin
         case Some(LeaveString) =>
           s"""```
-             |Leave the game or watch queue
+             |Leave the queue
              |Usage: $symbolStr$LeaveString
              |```""".stripMargin
         case Some(ShowString) =>
@@ -323,7 +332,7 @@ class UserCommands(config: Config,
             s"""$register Register yourself in the database""",
             s"""$info Shows player information""",
             s"""$join Join the game queue""",
-            s"""$leave Leave the game or watch queue""",
+            s"""$leave Leave the queue""",
             s"""$show Show current queue state""",
             s"""$leaderboard Show the leaderboard"""
           ).mkString("```User command list:\n\n", "\n", s"\n\nFor more details, say ${symbolStr}help <command>```")

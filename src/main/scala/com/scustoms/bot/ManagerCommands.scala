@@ -50,10 +50,6 @@ class ManagerCommands(config: Config,
     val parsedUserId = DiscordUtils.getUserIdFromMention(mention)
     val parsedRole = role.map(QueueService.parseRole).getOrElse(Some(QueueService.Fill))
     (parsedUserId, parsedRole) match {
-      case (Some(userId), _) if queueService.contains(userId) =>
-        DiscordUtils.reactAndRespond(negativeMark, s"$mention is already in the queue")
-      case (Some(userId), _) if matchService.contains(userId) =>
-        DiscordUtils.reactAndRespond(negativeMark, s"$mention is already in a match")
       case (Some(userId), Some(role)) =>
         OptFuture.fromFuture(playerService.find(userId)).map {
           case Some(player) =>
@@ -76,7 +72,7 @@ class ManagerCommands(config: Config,
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, Option[String])](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit command => {
-      def addToQueue(p: QueuedPlayer): Boolean = queueService.upsertPlayer(p)
+      def addToQueue(p: QueuedPlayer): Boolean = queueService.upsertNormalPlayer(p)
       addPlayerToQueue(addToQueue, command.parsed._1, command.parsed._2)
     })
 
@@ -136,10 +132,12 @@ class ManagerCommands(config: Config,
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[String]
     .asyncOpt(implicit command => {
-      DiscordUtils.getUserIdFromMention(command.parsed).map(queueService.remove) match {
-        case Some(true) =>
-          DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} was removed from the queue")
-        case Some(false) =>
+      DiscordUtils.getUserIdFromMention(command.parsed) match {
+        case Some(userId) if queueService.containsNormalPlayer(userId) =>
+          DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} has been removed from the queue")
+        case Some(userId) if queueService.containsPriorityPlayer(userId) =>
+          DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} has been removed from the priority queue")
+        case Some(userId) =>
           DiscordUtils.reactAndRespond(negativeMark, "Player was not found in the queue")
         case None =>
           DiscordUtils.reactAndRespond(negativeMark, "Mention could not be parsed")
@@ -155,7 +153,7 @@ class ManagerCommands(config: Config,
       implicit m => {
         val prioPlayers = queueService.getPriorityQueue
         val players = if (prioPlayers.isEmpty)
-          queueService.getQueue
+          queueService.getNormalQueue
         else
           prioPlayers ++ queueService.getRandomN(10 - prioPlayers.length)
         val startingMatch = RatingUtils.calculateRoleMatch(players)
