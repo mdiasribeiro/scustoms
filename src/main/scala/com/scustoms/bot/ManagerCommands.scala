@@ -36,12 +36,24 @@ class ManagerCommands(config: Config,
   val requiredRole: RoleId = StaticReferences.managerRoleId
 
   final val ClearString = "clearQueue"
-  val clear: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(ClearString))
+  final val ClearShortString = "clear"
+  val clear: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(ClearString, ClearShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
+    .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit m => {
-      queueService.clearAll()
+      m.parsed match {
+        case Some("all") =>
+          queueService.clearAll()
+          DiscordUtils.reactAndRespond(positiveMark, "All queues have been cleared")
+        case Some("prio") =>
+          queueService.clearPriorityQueue()
+          DiscordUtils.reactAndRespond(positiveMark, "Priority queue has been cleared")
+        case _ =>
+          queueService.clearNormalQueue()
+          DiscordUtils.reactAndRespond(positiveMark, "Normal queue has been cleared")
+      }
       DiscordUtils.reactAndRespond(positiveMark, "Queue has been cleared")
     })
 
@@ -66,9 +78,10 @@ class ManagerCommands(config: Config,
   }
 
   final val AddPlayerString = "addPlayer"
+  final val AddPlayerShortString = "add"
   val addPlayer: NamedComplexCommand[(String, Option[String]), NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(AddPlayerString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(AddPlayerString, AddPlayerShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, Option[String])](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit command => {
@@ -77,9 +90,10 @@ class ManagerCommands(config: Config,
     })
 
   final val AddPriorityPlayerString = "addPrioPlayer"
+  final val AddPriorityPlayerShortString = "addPrio"
   val addPriorityPlayer: NamedComplexCommand[(String, Option[String]), NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(AddPriorityPlayerString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(AddPriorityPlayerString, AddPriorityPlayerShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, Option[String])](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit command => {
@@ -88,9 +102,10 @@ class ManagerCommands(config: Config,
     })
 
   final val SwapPlayersString = "swapPlayers"
+  final val SwapPlayersShortString = "sp"
   val swapPlayers: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(SwapPlayersString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(SwapPlayersString, SwapPlayersShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, String)](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit command => {
@@ -126,18 +141,21 @@ class ManagerCommands(config: Config,
     })
 
   final val RemoveString = "removePlayer"
+  final val RemoveShortString = "rp"
   val remove: NamedComplexCommand[String, NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(RemoveString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(RemoveString, RemoveShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[String]
     .asyncOpt(implicit command => {
       DiscordUtils.getUserIdFromMention(command.parsed) match {
         case Some(userId) if queueService.containsNormalPlayer(userId) =>
+          queueService.remove(userId)
           DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} has been removed from the queue")
         case Some(userId) if queueService.containsPriorityPlayer(userId) =>
+          queueService.remove(userId)
           DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} has been removed from the priority queue")
-        case Some(userId) =>
+        case Some(_) =>
           DiscordUtils.reactAndRespond(negativeMark, "Player was not found in the queue")
         case None =>
           DiscordUtils.reactAndRespond(negativeMark, "Mention could not be parsed")
@@ -145,9 +163,10 @@ class ManagerCommands(config: Config,
     })
 
   final val StartString = "startMatch"
+  final val StartShortString = "sm"
   val start: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(StartString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(StartString, StartShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(DiscordUtils.withErrorHandler(_) {
       implicit m => {
@@ -167,9 +186,10 @@ class ManagerCommands(config: Config,
     })
 
   final val RebalanceString = "rebalanceMatch"
+  final val RebalanceShortString = "rm"
   val rebalance: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(RebalanceString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(RebalanceString, RebalanceShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(DiscordUtils.withErrorHandler(_) {
       implicit m => {
@@ -186,9 +206,10 @@ class ManagerCommands(config: Config,
     })
 
   final val AbortString = "abortMatch"
+  final val AbortShortString = "am"
   val abort: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(AbortString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(AbortString, AbortShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(implicit m => {
       matchService.ongoingMatch match {
@@ -204,7 +225,7 @@ class ManagerCommands(config: Config,
 
   final val EnrolString = "enrolPlayer"
   val enrol: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(EnrolString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, String)](MessageParser.Auto.deriveParser)
@@ -237,7 +258,7 @@ class ManagerCommands(config: Config,
 
   final val RenamePlayerString = "renamePlayer"
   val renamePlayer: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(RenamePlayerString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, String)](MessageParser.Auto.deriveParser)
@@ -257,9 +278,10 @@ class ManagerCommands(config: Config,
     })
 
   final val WinnerString = "declareWinner"
+  final val WinnerShortString = "dw"
   val winner: NamedComplexCommand[Int, NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(WinnerString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(WinnerString, WinnerShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[Int]
     .asyncOpt(implicit m => {
@@ -303,7 +325,7 @@ class ManagerCommands(config: Config,
     )
 
   val addMatch: NamedComplexCommand[AddMatchParams, NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(AddMatchString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[AddMatchParams](MessageParser.Auto.deriveParser)
@@ -327,7 +349,7 @@ class ManagerCommands(config: Config,
 
   final val RelocateRoomsString = "relocateRooms"
   val relocateRooms: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(RelocateRoomsString, "recolaterooms", "rr"))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(implicit m => {
@@ -350,7 +372,7 @@ class ManagerCommands(config: Config,
 
   final val RelocateLobbyString = "relocateLobby"
   val relocateLobby: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(RelocateLobbyString, "recolatelobby", "rl"))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(implicit m => {
@@ -369,7 +391,7 @@ class ManagerCommands(config: Config,
 
   val helpString = "help"
   val help: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(Seq(managerCommandsSymbol), Seq(helpString))
     .parsing[Option[String]](MessageParser.optional)
     .withRequest(m => {
@@ -378,7 +400,8 @@ class ManagerCommands(config: Config,
         case Some(ClearString) =>
           s"""```
              |Clear the queue
-             |Usage: $symbolStr$ClearString
+             |Usage: $symbolStr$ClearString <?parameter>
+             |(Possible parameters: all, prio)
              |```""".stripMargin
         case Some(AddPlayerString) =>
           s"""```

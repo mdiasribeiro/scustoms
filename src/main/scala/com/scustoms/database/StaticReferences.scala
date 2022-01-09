@@ -5,6 +5,7 @@ import ackcord.data._
 object StaticReferences {
   val guildId: GuildId = SnowflakeType[Guild](149979917570801665L)
   val botChannel: TextGuildChannelId = SnowflakeType[TextGuildChannel](916070126611234816L)
+  val adminChannel: TextGuildChannelId = SnowflakeType[TextGuildChannel](929535026415145000L)
   val teamAChannel: VoiceGuildChannelId = SnowflakeType[VoiceGuildChannel](149979918355267584L)
   val teamBChannel: VoiceGuildChannelId = SnowflakeType[VoiceGuildChannel](168517644092178432L)
   val lobbyChannel: VoiceGuildChannelId = teamAChannel

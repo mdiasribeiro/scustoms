@@ -28,7 +28,7 @@ class AdminCommands(config: Config,
 
   final val ShutdownString = "shutdown"
   val shutdown: NamedComplexCommand[String, NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(adminCommandSymbols, Seq(ShutdownString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[String]
@@ -43,7 +43,7 @@ class AdminCommands(config: Config,
 
   final val ResetString = "resetRatings"
   val reset: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(adminCommandSymbols, Seq(ResetString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(implicit m => OptFuture
@@ -53,7 +53,7 @@ class AdminCommands(config: Config,
 
   final val ReprocessString = "reprocess"
   val reprocess: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(adminCommandSymbols, Seq(ReprocessString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .asyncOpt(implicit m => {
@@ -92,7 +92,7 @@ class AdminCommands(config: Config,
 
   val helpString = "help"
   val help: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(adminCommandSymbols, Seq(helpString))
     .parsing[Option[String]](MessageParser.optional)
     .withRequest(m => {

@@ -13,13 +13,17 @@ object QueueService {
     override def message: String = "Error parsing desired role."
   }
   final case object PlayerDoesNotExist extends QueueError {
-    override def message: String = "Player was not found. Make sure you register before joining the queue."
+    override def message: String = "Player not found. Make sure you register before joining the queue."
   }
   final case object PlayerAlreadyInQueue extends QueueError {
     override def message: String = "Player is already in the queue."
   }
   final case object PlayerAlreadyInMatch extends QueueError {
     override def message: String = "Player is already in a match."
+  }
+
+  object RoleOrdering extends Ordering[QueueRole] {
+    def compare(a: QueueRole, b: QueueRole): Int = a.toString compare a.toString
   }
 
   sealed trait QueueRole {
@@ -72,25 +76,23 @@ class QueueService {
     res
   }
 
-  def removeNormalPlayer(playerId: UserId): Boolean = {
+  def removeNormalPlayer(playerId: UserId): Boolean =
     if (this.containsNormalPlayer(playerId)) {
       queue = queue.filterNot(_.stats.discordId == playerId)
       true
     } else {
       false
     }
-  }
 
-  def removePriorityPlayer(playerId: UserId): Boolean = {
+  def removePriorityPlayer(playerId: UserId): Boolean =
     if (this.containsPriorityPlayer(playerId)) {
       priorityQueue = priorityQueue.filterNot(_.stats.discordId == playerId)
       true
     } else {
       false
     }
-  }
 
-  def remove(playerId: UserId): Boolean = {
+  def remove(playerId: UserId): Boolean =
     if (this.contains(playerId)) {
       queue = queue.filterNot(_.stats.discordId == playerId)
       priorityQueue = priorityQueue.filterNot(_.stats.discordId == playerId)
@@ -98,7 +100,6 @@ class QueueService {
     } else {
       false
     }
-  }
 
   def containsNormalPlayer(playerId: UserId): Boolean = queue.exists(_.stats.discordId == playerId)
 
@@ -115,7 +116,7 @@ class QueueService {
     clearPriorityQueue()
   }
 
-  def priorityQueueSize: Int = priorityQueue.length
+  def priorityQueueSize: Int = queue.length
 
   def normalQueueSize: Int = priorityQueue.length
 
@@ -133,9 +134,7 @@ class QueueService {
       .orElse(priorityQueue.find(_.stats.discordId == userId))
   }
 
-  def getAll(players: Seq[UserId]): Seq[QueuedPlayer] = {
-    players.flatMap(p => findPlayer(p))
-  }
+  def getAll(players: Seq[UserId]): Seq[QueuedPlayer] = players.flatMap(p => findPlayer(p))
 
   def updatePriorities(playingPlayers: Seq[MatchPlayer], remainingPlayers: Seq[QueuedPlayer]): Unit = {
     getAll(playingPlayers.map(_.state.discordId)).map(p => upsertNormalPlayer(p))

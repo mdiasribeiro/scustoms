@@ -40,7 +40,7 @@ class UserCommands(config: Config,
 
   val RegisteredString = "registered"
   val registered: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(RegisteredString))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit m => {
@@ -62,7 +62,7 @@ class UserCommands(config: Config,
 
   val InfoString = "info"
   val info: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(InfoString))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit userCommandMessage => {
@@ -83,7 +83,8 @@ class UserCommands(config: Config,
       }
     })
 
-  val LeaderboardString = "leaderboard"
+  final val LeaderboardString = "leaderboard"
+  final val LeaderboardShortString = "lb"
   case class FilteredStatistics(role: MatchRole, stats: PlayerStatistics, player: PlayerWithStatistics)
 
   def leaderboardRow(filteredStatistics: FilteredStatistics, index: Int)(additionalFields: FilteredStatistics => String): String = {
@@ -101,8 +102,8 @@ class UserCommands(config: Config,
   }
 
   val leaderboard: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(userCommandSymbols, Seq(LeaderboardString, "lederborde", "lederboard", "leatherboard", "lb", "ladderbored"))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(userCommandSymbols, Seq(LeaderboardString, LeaderboardShortString, "lederborde", "lederboard", "leatherboard", "ladderbored"))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit userCommandMessage => {
       val roleFilterOpt = userCommandMessage.parsed.flatMap(r => QueueService.parseRole(r).flatMap(_.toMatchRole))
@@ -139,7 +140,7 @@ class UserCommands(config: Config,
 
   val HistoryString = "history"
   val history: NamedComplexCommand[Option[Int], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(HistoryString))
     .parsing[Option[Int]](MessageParser.optional)
     .asyncOpt(implicit userCommandMessage => {
@@ -162,7 +163,7 @@ class UserCommands(config: Config,
 
   val RegisterString = "register"
   val register: NamedComplexCommand[String, NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(RegisterString))
     .parsing[String]
     .asyncOpt(implicit m => {
@@ -180,9 +181,10 @@ class UserCommands(config: Config,
     })
 
   val JoinString = "join"
+  val JoinShortString = "j"
   val join: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
-    .named(userCommandSymbols, Seq(JoinString))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(userCommandSymbols, Seq(JoinString, JoinShortString))
     .parsing[Option[String]](MessageParser.optional)
     .asyncOpt(implicit command => {
       val result: Future[Either[QueueError, QueuedPlayer]] =
@@ -219,7 +221,7 @@ class UserCommands(config: Config,
 
   val LeaveString = "leave"
   val leave: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(LeaveString))
     .asyncOpt(implicit command =>
       if (queueService.removeNormalPlayer(command.user.id))
@@ -232,7 +234,7 @@ class UserCommands(config: Config,
 
   val ShowString = "show"
   def queuedPlayersToString(players: Seq[QueuedPlayer]): Seq[String] = {
-    players.map {
+    players.sortBy(_.role)(QueueService.RoleOrdering).map {
       case QueuedPlayer(QueueService.Fill, player) =>
         s"${player.gameUsername.pad(tablePadding)}${QueueService.Fill.toString.pad(shortTablePadding)}"
       case QueuedPlayer(role, player) =>
@@ -241,7 +243,7 @@ class UserCommands(config: Config,
     }
   }
   val show: NamedCommand[NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(ShowString))
     .withRequest(implicit m => {
       val prioPlayers = queuedPlayersToString(queueService.getPriorityQueue)
@@ -268,7 +270,7 @@ class UserCommands(config: Config,
 
   val HelpString = "help"
   val help: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.onlyInTextRoom(StaticReferences.botChannel))
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(Seq(userCommandsSymbol), Seq(HelpString))
     .parsing[Option[String]](MessageParser.optional)
     .withRequest(implicit m => {

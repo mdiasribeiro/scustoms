@@ -13,6 +13,7 @@ import scala.concurrent.ExecutionContext
 import com.scustoms.Utils.StringImprovements
 import com.scustoms.Utils.SeqImprovements
 import com.scustoms.bot.Emojis.negativeMark
+import com.scustoms.database.StaticReferences
 import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService.QueuedPlayer
 import com.scustoms.trueskill.RatingUtils.percentageFormat
@@ -76,7 +77,7 @@ object DiscordUtils {
     val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n${"TEAM 2".pad(columnSize)}$header\n", "\n", "")
     val remaining = if (remainingPlayers.isEmpty) "" else remainingToStrings(remainingPlayers, columnSize).mkString(s"\n${"REMAINING".pad(columnSize)}${"Role".pad(columnSize)}\n", "\n", "")
     val quality = percentageFormat(m.quality * 100)
-    s"```Match quality: $quality%\n$teamAPlayers\n$teamBPlayers\n$remaining```"
+    codeBlock(s"Match quality: $quality%\n$teamAPlayers\n$teamBPlayers\n$remaining")
   }
 
   def playerToString(p: PlayerWithStatistics, tablePadding: Int): String = {
@@ -86,7 +87,7 @@ object DiscordUtils {
         Seq(role.toString, stats.games.toString, stats.winRatePercentage, stats.formattedMeanRating,
           stats.formattedConservativeRating).padConcat(tablePadding)
     }.mkString("\n")
-    s"```In-game name: ${p.gameUsername}\n\n$header\n$playerStats```".stripMargin
+    codeBlock(s"In-game name: ${p.gameUsername}\n\n$header\n$playerStats")
   }
 
   def parseWinningTeamA(parsed: Int): Option[Boolean] = parsed match {
@@ -117,10 +118,10 @@ object DiscordUtils {
       }
   }
 
-  def onlyInTextRoom[M[A] <: GuildCommandMessage[A]](allowedTextRoom: TextGuildChannelId): CommandFunction[M, M] = new CommandFunction[M, M] {
+  def allowedTextRoom[M[A] <: GuildCommandMessage[A]](allowedTextRoom: TextGuildChannelId): CommandFunction[M, M] = new CommandFunction[M, M] {
     override def flow[A]: Flow[M[A], Either[Option[CommandError], M[A]], NotUsed] =
       Flow[M[A]].map { m =>
-        if (m.textChannel.id == allowedTextRoom)
+        if (m.textChannel.id == allowedTextRoom || m.textChannel.id == StaticReferences.adminChannel)
           Right(m)
         else
           Left(None)
