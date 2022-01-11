@@ -72,10 +72,10 @@ class AdminCommands(config: Config,
             hasMore = batch.length >= limit
             offset = offset + batch.length
             batch.foreach(unresolvedMatch => {
-              val processedMatch = matchService.resolveMatch(unresolvedMatch).flatMap {
-                case Some(resolvedMatch) =>
-                  val ongoingMatch = OngoingMatch.fromResolvedMatch(resolvedMatch)
-                  val completeMatch = RatingUtils.calculate(ongoingMatch, resolvedMatch.team1Won)
+              val processedMatch = matchService.resolveStoredMatch(unresolvedMatch).flatMap {
+                case Some(resolvedStoredMatch) =>
+                  val ongoingMatch = OngoingMatch.fromResolvedStoredMatch(resolvedStoredMatch)
+                  val completeMatch = RatingUtils.calculate(ongoingMatch, resolvedStoredMatch.team1Won)
                   matchService.updateRatings(completeMatch)
                 case None =>
                   println("Error: unresolved match!")

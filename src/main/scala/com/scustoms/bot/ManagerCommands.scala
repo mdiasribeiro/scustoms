@@ -255,7 +255,7 @@ class ManagerCommands(config: Config,
     })
 
   final val RenamePlayerString = "renamePlayer"
-  final val RenameShortString = "winner"
+  final val RenameShortString = "rename"
   val renamePlayer: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(RenamePlayerString, RenameShortString))
@@ -302,6 +302,26 @@ class ManagerCommands(config: Config,
       }
     })
 
+  final val CorrectString = "correctLast"
+  final val CorrectShortString = "correct"
+  val correct: NamedComplexCommand[Int, NotUsed] = GuildCommand
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq(CorrectString, CorrectShortString))
+    .andThen(DiscordUtils.needRole(requiredRole))
+    .parsing[Int]
+    .asyncOpt(implicit m => {
+      OptFuture.fromFuture(matchService.getLastN(1))
+        .flatMap(lastMatch => (lastMatch, DiscordUtils.parseWinningTeamA(m.parsed)) match {
+          case (Seq(lastMatch), Some(team1Won)) =>
+            matchService.changeResult(lastMatch.id, team1Won)
+            DiscordUtils.reactAndRespond(positiveMark, "Last match result has been changed.")
+          case (_, None) =>
+            DiscordUtils.reactAndRespond(negativeMark, "Team number is not valid. Must be 1 or 2.")
+          case _ =>
+            DiscordUtils.reactAndRespond(negativeMark, "Last match could not be retrieved.")
+        })
+    })
+
   final val AddMatchString = "addMatch"
   case class AddMatchParams(t1: String, j1: String, m1: String, b1: String, s1: String,
                             t2: String, j2: String, m2: String, b2: String, s2: String, winningTeam: Int)
@@ -333,9 +353,9 @@ class ManagerCommands(config: Config,
     .asyncOpt(implicit m => {
       resolveAddMatch(m.parsed) match {
         case Some(params) =>
-          OptFuture.fromFuture(matchService.resolveMatch(params)).map {
+          OptFuture.fromFuture(matchService.resolveStoredMatch(params)).map {
             case Some(resolvedMatch) =>
-              val ongoingMatch = OngoingMatch.fromResolvedMatch(resolvedMatch)
+              val ongoingMatch = OngoingMatch.fromResolvedStoredMatch(resolvedMatch)
               val completeMatch = RatingUtils.calculate(ongoingMatch, resolvedMatch.team1Won)
               matchService
                 .insertAndUpdate(completeMatch)
@@ -436,6 +456,18 @@ class ManagerCommands(config: Config,
              |Rebalances the ongoing match
              |Usage: $symbolStr$RebalanceString
              |```""".stripMargin
+        case Some(WinnerString) =>
+          s"""```
+             |Declare a winner for an on-going match
+             |Usage: $symbolStr$WinnerString <winning_team>
+             |Winning team parameter should be either the integer 1 or 2
+             |```""".stripMargin
+        case Some(CorrectString) =>
+          s"""```
+             |Modifies the result of the last declared match
+             |Usage: $symbolStr$CorrectString <winning_team>
+             |Winning team parameter should be either the integer 1 or 2
+             |```""".stripMargin
         case Some(AbortString) =>
           s"""```
              |Abort an ongoing match
@@ -450,12 +482,6 @@ class ManagerCommands(config: Config,
           s"""```
              |Change the game username of the mentioned player
              |Usage: $symbolStr$RenamePlayerString <mention>
-             |```""".stripMargin
-        case Some(WinnerString) =>
-          s"""```
-             |Declare a winner for an on-going match
-             |Usage: $symbolStr$WinnerString <winning_team>
-             |Winning team parameter should be either the integer 1 or 2
              |```""".stripMargin
         case Some(AddMatchString) =>
           s"""```
@@ -480,10 +506,11 @@ class ManagerCommands(config: Config,
           val remove = s"$symbolStr$RemoveString".pad(tablePadding)
           val start = s"$symbolStr$StartString".pad(tablePadding)
           val rebalance = s"$symbolStr$RebalanceString".pad(tablePadding)
+          val winner = s"$symbolStr$WinnerString".pad(tablePadding)
+          val correct = s"$symbolStr$CorrectString".pad(tablePadding)
           val abort = s"$symbolStr$AbortString".pad(tablePadding)
           val enrol = s"$symbolStr$EnrolString".pad(tablePadding)
           val rename = s"$symbolStr$RenamePlayerString".pad(tablePadding)
-          val winner = s"$symbolStr$WinnerString".pad(tablePadding)
           val addMatch = s"$symbolStr$AddMatchString".pad(tablePadding)
           val relocateRooms = s"$symbolStr$RelocateRoomsString".pad(tablePadding)
           val relocateLobby = s"$symbolStr$RelocateLobbyString".pad(tablePadding)
@@ -495,10 +522,11 @@ class ManagerCommands(config: Config,
             s"""$remove Remove the target player from the queue""",
             s"""$start Starts a match with the players in the queue""",
             s"""$rebalance Rebalances the ongoing match""",
+            s"""$winner Declare a winner for an on-going match""",
+            s"""$correct Modifies the result of the last declared match""",
             s"""$abort Abort an ongoing match""",
             s"""$enrol Register another user""",
             s"""$rename Change the game username of the target user""",
-            s"""$winner Declare a winner for an on-going match""",
             s"""$addMatch Adds a match to the database""",
             s"""$relocateRooms Move match players to the teams voice rooms""",
             s"""$relocateLobby Move match players to the lobby voice room""",
@@ -507,6 +535,6 @@ class ManagerCommands(config: Config,
       m.textChannel.sendMessage(helpText)
     })
 
-  val commandList = Seq(clear, addPlayer, addPriorityPlayer, remove, start, rebalance, abort, enrol, renamePlayer, help, winner,
-    addMatch, relocateRooms, relocateLobby, swapPlayers)
+  val commandList = Seq(clear, addPlayer, addPriorityPlayer, remove, start, rebalance, winner, correct, abort, enrol,
+    renamePlayer, help, addMatch, relocateRooms, relocateLobby, swapPlayers)
 }

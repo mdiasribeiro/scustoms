@@ -44,7 +44,7 @@ object MatchService {
   }
 
   object OngoingMatch {
-    def fromResolvedMatch(m: ResolvedMatch): OngoingMatch = {
+    def fromResolvedStoredMatch(m: ResolvedStoredMatch): OngoingMatch = {
       val score = TwoTeamCalculator.calculateMatchQuality(RatingUtils.defaultGameInfo, m.teamA, m.teamB)
       OngoingMatch(score, m.teamA, m.teamB)
     }
@@ -114,6 +114,10 @@ object MatchService {
 
   case class ResolvedMatch(team1Won: Boolean, teamA: MatchTeam, teamB: MatchTeam)
 
+  case class ResolvedStoredMatch(id: Long, team1Won: Boolean, teamA: MatchTeam, teamB: MatchTeam) {
+    def toResolvedMatch: ResolvedMatch = ResolvedMatch(team1Won, teamA, teamB)
+  }
+
   sealed trait MatchError
   case object NotEnoughPlayers extends MatchError
 }
@@ -165,32 +169,32 @@ class MatchService(matchKeeper: MatchKeeper, playerService: PlayerService)(impli
   def contains(userId: UserId): Boolean = ongoingMatch.exists(m =>
     m.team1.seq.exists(_.state.discordId == userId) || m.team2.seq.exists(_.state.discordId == userId))
 
-  def resolveMatch(m: StoredMatch): Future[Option[ResolvedMatch]] = {
+  def resolveStoredMatch(m: StoredMatch): Future[Option[ResolvedStoredMatch]] = {
     for {
       teamAResult <- resolveTeam(m.teamA)
       teamBResult <- resolveTeam(m.teamB)
     } yield (teamAResult, teamBResult) match {
       case (Some(teamA), Some(teamB)) =>
-        Some(ResolvedMatch(m.team1Won, teamA, teamB))
+        Some(ResolvedStoredMatch(m.id, m.team1Won, teamA, teamB))
       case _ =>
         None
     }
   }
 
-  def resolveMatches(seqStoredMatches: Seq[StoredMatch]): Future[Seq[Option[ResolvedMatch]]] = {
-    val seqOfFutures = seqStoredMatches.map(m => resolveMatch(m))
+  def resolveStoredMatches(seqStoredMatches: Seq[StoredMatch]): Future[Seq[Option[ResolvedStoredMatch]]] = {
+    val seqOfFutures = seqStoredMatches.map(m => resolveStoredMatch(m))
     Future.sequence(seqOfFutures)
   }
 
-  def getLastN(n: Int): Future[Seq[ResolvedMatch]] =
+  def getLastN(n: Int): Future[Seq[ResolvedStoredMatch]] =
     matchKeeper
       .getLastN(n)
-      .flatMap(resolveMatches)
+      .flatMap(resolveStoredMatches)
       .map(_.flatten)
 
-  def get(limit: Int, offset: Int): Future[Seq[ResolvedMatch]] =
+  def get(limit: Int, offset: Int): Future[Seq[ResolvedStoredMatch]] =
     getUnresolved(limit, offset)
-      .flatMap(resolveMatches)
+      .flatMap(resolveStoredMatches)
       .map(_.flatten)
 
   def getUnresolved(limit: Int, offset: Int): Future[Seq[StoredMatch]] =
@@ -251,4 +255,6 @@ class MatchService(matchKeeper: MatchKeeper, playerService: PlayerService)(impli
       case _ =>
         None
     }
+
+  def changeResult(id: Long, team1Won: Boolean): Future[Int] = matchKeeper.changeResult(id, team1Won)
 }

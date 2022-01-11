@@ -9,7 +9,7 @@ import Emojis.{negativeMark, positiveMark}
 import com.scustoms.database.keepers.PlayerKeeper
 import com.scustoms.database.StaticReferences
 import com.scustoms.database.keepers.PlayerStatisticsKeeper.PlayerStatistics
-import com.scustoms.services.MatchService.{MatchRole, ResolvedMatch}
+import com.scustoms.services.MatchService.{MatchRole, ResolvedStoredMatch}
 import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService._
 import com.scustoms.services.{MatchService, PlayerService, QueueService}
@@ -144,20 +144,27 @@ class UserCommands(config: Config,
     .named(userCommandSymbols, Seq(HistoryString))
     .parsing[Option[Int]](MessageParser.optional)
     .asyncOpt(implicit userCommandMessage => {
-      val historySize = userCommandMessage.parsed.map(c => math.min(100, math.max(c, 0))).getOrElse(10)
+      val defaultSize = 5
+      val maxSize = 30
+      val historySize = userCommandMessage.parsed.map(c => math.min(maxSize, math.max(c, 0))).getOrElse(defaultSize)
       OptFuture.fromFuture(matchService.getLastN(historySize)).flatMap {
         matches =>
-          val matchStrings = matches.map {
-            case ResolvedMatch(teamAWon, teamA, teamB) =>
-              val teamAString = teamA.seq.map(_.state.gameUsername.pad(shortTablePadding)).mkString("")
-              val teamBString = teamB.seq.map(_.state.gameUsername.pad(shortTablePadding)).mkString("")
-              val winnerA = if (teamAWon) "Won".pad(shortTablePadding) else "Lost".pad(shortTablePadding)
-              val winnerB = if (!teamAWon) "Won".pad(shortTablePadding) else "Lost".pad(shortTablePadding)
-              f"$winnerA$teamAString\n$winnerB$teamBString\n"
-          }
-          val header = s"${"Result".pad(shortTablePadding)}${"Teams".pad(shortTablePadding * 5)}"
-          val message = matchStrings.mkString(s"```$header\n\n", "\n", "```")
-          DiscordUtils.reactAndRespond(positiveMark, message)
+          val roles = Seq("Top", "Jungle", "Mid", "Bot", "Support").padConcat(shortTablePadding)
+          val header = s"${"#".pad(indexPadding)}${"Result".pad(shortTablePadding)}$roles"
+          val historyMessages = matches.map {
+              case ResolvedStoredMatch(id, teamAWon, teamA, teamB) =>
+                val teamAString = teamA.seq.map(_.state.gameUsername.pad(shortTablePadding)).mkString("")
+                val teamBString = teamB.seq.map(_.state.gameUsername.pad(shortTablePadding)).mkString("")
+                val winnerA = if (teamAWon) "Won".pad(shortTablePadding) else "---".pad(shortTablePadding)
+                val winnerB = if (!teamAWon) "Won".pad(shortTablePadding) else "---".pad(shortTablePadding)
+                val idString = id.toString.pad(indexPadding)
+                val shortPad = "".pad(indexPadding)
+                f"$idString$winnerA$teamAString\n$shortPad$winnerB$teamBString\n"
+            }
+            .grouped(defaultSize)
+            .map(group => userCommandMessage.textChannel.sendMessage(group.mkString(s"```$header\n\n", "\n", "```")))
+            .toSeq
+          client.requestsHelper.runMany(historyMessages: _*).map(_ => ())
       }
     })
 
@@ -285,9 +292,9 @@ class UserCommands(config: Config,
              |```""".stripMargin
         case Some(HistoryString) =>
           s"""```
-             |Look into the N latest matches.
+             |Look into the N latest matches (default 5)
              |Usage: $symbolStr$HistoryString <?N>
-             |N will be capped within the range [0, 100]
+             |N will be capped within the range [0, 30]
              |```""".stripMargin
         case Some(RegisterString) =>
           s"""```

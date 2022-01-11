@@ -81,4 +81,21 @@ class MatchKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContex
         .map(_.map(StoredMatch.fromTuple))
     }
   }
+
+  def changeResult(id: Long, team1Won: Boolean): Future[Int] = {
+    databaseManager.run {
+      storedMatchesTable
+        .filter(storedMatch => storedMatch.id === id)
+        .map(p => p.team1Won)
+        .update(team1Won)
+    }
+  }
+
+  def remove(id: Long): Future[Int] = {
+    databaseManager.run {
+      storedMatchesTable
+        .filter(storedMatch => storedMatch.id === id)
+        .delete
+    }
+  }
 }
