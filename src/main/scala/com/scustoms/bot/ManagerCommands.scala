@@ -54,7 +54,6 @@ class ManagerCommands(config: Config,
           queueService.clearNormalQueue()
           DiscordUtils.reactAndRespond(positiveMark, "Normal queue has been cleared")
       }
-      DiscordUtils.reactAndRespond(positiveMark, "Queue has been cleared")
     })
 
   def addPlayerToQueue[T](queueLambda: QueuedPlayer => Boolean, mention: String, role: Option[String])
@@ -102,7 +101,7 @@ class ManagerCommands(config: Config,
     })
 
   final val SwapPlayersString = "swapPlayers"
-  final val SwapPlayersShortString = "sp"
+  final val SwapPlayersShortString = "swap"
   val swapPlayers: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(SwapPlayersString, SwapPlayersShortString))
@@ -141,7 +140,7 @@ class ManagerCommands(config: Config,
     })
 
   final val RemoveString = "removePlayer"
-  final val RemoveShortString = "rp"
+  final val RemoveShortString = "remove"
   val remove: NamedComplexCommand[String, NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(RemoveString, RemoveShortString))
@@ -163,7 +162,7 @@ class ManagerCommands(config: Config,
     })
 
   final val StartString = "startMatch"
-  final val StartShortString = "sm"
+  final val StartShortString = "start"
   val start: NamedCommand[NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(StartString, StartShortString))
@@ -177,16 +176,14 @@ class ManagerCommands(config: Config,
           prioPlayers ++ queueService.getRandomN(10 - prioPlayers.length)
         val startingMatch = RatingUtils.calculateRoleMatch(players)
         matchService.ongoingMatch = Some(startingMatch)
-        val playingPlayers = startingMatch.team1.seq ++ startingMatch.team2.seq
         val remainingPlayers = queueService.remaining(startingMatch)
-        queueService.updatePriorities(playingPlayers, remainingPlayers)
         val msg = DiscordUtils.ongoingMatchToString(startingMatch, remainingPlayers, tablePadding)
-        client.requestsHelper.run(m.textChannel.sendMessage(msg)).map(_ => ())
+        client.requestsHelper.run(m.textChannel.sendMessage(DiscordUtils.codeBlock(msg))).map(_ => ())
       }
     })
 
   final val RebalanceString = "rebalanceMatch"
-  final val RebalanceShortString = "rm"
+  final val RebalanceShortString = "rebalance"
   val rebalance: NamedCommand[NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(RebalanceString, RebalanceShortString))
@@ -206,7 +203,7 @@ class ManagerCommands(config: Config,
     })
 
   final val AbortString = "abortMatch"
-  final val AbortShortString = "am"
+  final val AbortShortString = "abort"
   val abort: NamedCommand[NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(AbortString, AbortShortString))
@@ -215,7 +212,7 @@ class ManagerCommands(config: Config,
       matchService.ongoingMatch match {
         case Some(_) =>
           matchService.ongoingMatch = None
-          queueService.clearNormalQueue()
+          queueService.clearAll()
           val mention = StaticReferences.customsRoleId.resolve.map(_.mention).getOrElse("Players")
           DiscordUtils.reactAndRespond(positiveMark, s"Match was aborted. $mention, join the queue again.")
         case None =>
@@ -224,9 +221,10 @@ class ManagerCommands(config: Config,
     })
 
   final val EnrolString = "enrolPlayer"
+  final val EnrolShortString = "enrol"
   val enrol: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(EnrolString))
+    .named(managerCommandSymbols, Seq(EnrolString, EnrolShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, String)](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit m => {
@@ -257,9 +255,10 @@ class ManagerCommands(config: Config,
     })
 
   final val RenamePlayerString = "renamePlayer"
+  final val RenameShortString = "winner"
   val renamePlayer: NamedComplexCommand[(String, String), NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
-    .named(managerCommandSymbols, Seq(RenamePlayerString))
+    .named(managerCommandSymbols, Seq(RenamePlayerString, RenameShortString))
     .andThen(DiscordUtils.needRole(requiredRole))
     .parsing[(String, String)](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit m => {
@@ -278,7 +277,7 @@ class ManagerCommands(config: Config,
     })
 
   final val WinnerString = "declareWinner"
-  final val WinnerShortString = "dw"
+  final val WinnerShortString = "winner"
   val winner: NamedComplexCommand[Int, NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(WinnerString, WinnerShortString))
@@ -292,8 +291,10 @@ class ManagerCommands(config: Config,
         case (None, _) =>
           DiscordUtils.reactAndRespond(negativeMark, "Team number is not valid. Must be 1 or 2.")
         case (Some(team1Won), Some(ongoingMatch)) =>
-          queueService.clearNormalQueue()
           matchService.ongoingMatch = None
+          val playingPlayers = ongoingMatch.team1.seq ++ ongoingMatch.team2.seq
+          val remainingPlayers = queueService.remaining(ongoingMatch)
+          queueService.updatePriorities(playingPlayers, remainingPlayers)
           val completeMatch = RatingUtils.calculate(ongoingMatch, team1Won)
           val update = matchService.insertAndUpdate(completeMatch)
           OptFuture.fromFuture(update)

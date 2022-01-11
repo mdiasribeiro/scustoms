@@ -246,6 +246,7 @@ class UserCommands(config: Config,
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(userCommandSymbols, Seq(ShowString))
     .withRequest(implicit m => {
+      val ongoingMatch = matchService.ongoingMatch
       val prioPlayers = queuedPlayersToString(queueService.getPriorityQueue)
       val normalPlayers = queuedPlayersToString(queueService.getNormalQueue)
       val header = s"${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}${"Rating".pad(shortTablePadding)}"
@@ -261,10 +262,11 @@ class UserCommands(config: Config,
         |${normalPlayers.mkString("\n")}
         |\n""".stripMargin
       )
-      val message = if (prioPlayers.isEmpty && normalPlayers.isEmpty)
-        "The queue is currently empty"
+      val matchBlock = ongoingMatch.map(m => DiscordUtils.ongoingMatchToString(m, Seq.empty, tablePadding)).getOrElse("")
+      val message = if (prioPlayers.isEmpty && normalPlayers.isEmpty && ongoingMatch.isEmpty)
+        "The queue and match are currently empty"
       else
-        DiscordUtils.codeBlock(s"$prioQueueBlock$queueBlock")
+        DiscordUtils.codeBlock(s"$matchBlock\n$prioQueueBlock$queueBlock")
       m.textChannel.sendMessage(message)
     })
 

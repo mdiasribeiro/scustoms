@@ -77,7 +77,7 @@ object DiscordUtils {
     val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n${"TEAM 2".pad(columnSize)}$header\n", "\n", "")
     val remaining = if (remainingPlayers.isEmpty) "" else remainingToStrings(remainingPlayers, columnSize).mkString(s"\n${"REMAINING".pad(columnSize)}${"Role".pad(columnSize)}\n", "\n", "")
     val quality = percentageFormat(m.quality * 100)
-    codeBlock(s"Match quality: $quality%\n$teamAPlayers\n$teamBPlayers\n$remaining")
+    s"Match quality: $quality%\n$teamAPlayers\n$teamBPlayers\n$remaining"
   }
 
   def playerToString(p: PlayerWithStatistics, tablePadding: Int): String = {

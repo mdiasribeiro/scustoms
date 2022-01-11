@@ -137,7 +137,7 @@ class QueueService {
   def getAll(players: Seq[UserId]): Seq[QueuedPlayer] = players.flatMap(p => findPlayer(p))
 
   def updatePriorities(playingPlayers: Seq[MatchPlayer], remainingPlayers: Seq[QueuedPlayer]): Unit = {
-    getAll(playingPlayers.map(_.state.discordId)).map(p => upsertNormalPlayer(p))
-    remainingPlayers.map(p => upsertPriorityPlayer(p))
+    getAll(playingPlayers.map(_.state.discordId)).map(upsertNormalPlayer)
+    remainingPlayers.map(upsertPriorityPlayer)
   }
 }
