@@ -295,6 +295,7 @@ class ManagerCommands(config: Config,
           val playingPlayers = ongoingMatch.team1.seq ++ ongoingMatch.team2.seq
           val remainingPlayers = queueService.remaining(ongoingMatch)
           queueService.updatePriorities(playingPlayers, remainingPlayers)
+          queueService.clearNormalQueue()
           val completeMatch = RatingUtils.calculate(ongoingMatch, team1Won)
           val update = matchService.insertAndUpdate(completeMatch)
           OptFuture.fromFuture(update)
