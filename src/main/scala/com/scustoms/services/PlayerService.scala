@@ -16,13 +16,14 @@ object PlayerService {
   case class PlayerWithStatistics(discordId: UserId, discordUsername: String, gameUsername: String,
                                   topStats: PlayerStatistics, jungleStats: PlayerStatistics, midStats: PlayerStatistics,
                                   botStats: PlayerStatistics, supportStats: PlayerStatistics) {
-    def getBestStatistics: Option[(MatchRole, PlayerStatistics)] = {
+
+    def getStatisticsBy(minGames: Int = 0)(indexer: PlayerStatistics => Double): Option[(MatchRole, PlayerStatistics)] = {
       val stats = Seq(
-        Option.when(topStats.games > 0)     ((topStats.rating.getMean,     (MatchService.Top, topStats))),
-        Option.when(jungleStats.games > 0)  ((jungleStats.rating.getMean,  (MatchService.Jungle, jungleStats))),
-        Option.when(midStats.games > 0)     ((midStats.rating.getMean,     (MatchService.Mid, midStats))),
-        Option.when(botStats.games > 0)     ((botStats.rating.getMean,     (MatchService.Bot, botStats))),
-        Option.when(supportStats.games > 0) ((supportStats.rating.getMean, (MatchService.Support, supportStats))),
+        Option.when(topStats.games >= minGames)     ((indexer(topStats),     (MatchService.Top, topStats))),
+        Option.when(jungleStats.games >= minGames)  ((indexer(jungleStats),  (MatchService.Jungle, jungleStats))),
+        Option.when(midStats.games >= minGames)     ((indexer(midStats),     (MatchService.Mid, midStats))),
+        Option.when(botStats.games >= minGames)     ((indexer(botStats),     (MatchService.Bot, botStats))),
+        Option.when(supportStats.games >= minGames) ((indexer(supportStats), (MatchService.Support, supportStats))),
       ).flatten
       Option.unless(stats.isEmpty) {
         stats.maxBy(_._1)._2

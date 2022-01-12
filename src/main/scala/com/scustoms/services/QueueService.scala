@@ -13,13 +13,17 @@ object QueueService {
     override def message: String = "Error parsing desired role."
   }
   final case object PlayerDoesNotExist extends QueueError {
-    override def message: String = "Player was not found. Make sure you register before joining the queue."
+    override def message: String = "Player not found. Make sure you register before joining the queue."
   }
   final case object PlayerAlreadyInQueue extends QueueError {
     override def message: String = "Player is already in the queue."
   }
   final case object PlayerAlreadyInMatch extends QueueError {
     override def message: String = "Player is already in a match."
+  }
+
+  object RoleOrdering extends Ordering[QueueRole] {
+    def compare(a: QueueRole, b: QueueRole): Int = a.toString compare a.toString
   }
 
   sealed trait QueueRole {
@@ -33,13 +37,13 @@ object QueueService {
   final case object Fill extends QueueRole { override def toMatchRole: Option[MatchRole] = None }
 
   def parseRole(role: String): Option[QueueRole] = role.toLowerCase match {
-    case "top"               => Some(Top)
-    case "jungle"            => Some(Jungle)
-    case "mid"               => Some(Mid)
-    case "bot"               => Some(Bot)
-    case "sup" | "support"   => Some(Support)
-    case "fill" | "any"      => Some(Fill)
-    case _                   => None
+    case "top"                        => Some(Top)
+    case "jun" | "jung" | "jungle"    => Some(Jungle)
+    case "mid"                        => Some(Mid)
+    case "bot" | "adc"                => Some(Bot)
+    case "sup" | "supp" | "support"   => Some(Support)
+    case "fill" | "any"               => Some(Fill)
+    case _                            => None
   }
 
   case class QueuedPlayer(role: QueueRole, player: StoredPlayer) {
@@ -50,54 +54,88 @@ object QueueService {
 class QueueService {
 
   private var queue: Seq[QueuedPlayer] = Seq.empty
-  private var watchers: Seq[UserId] = Seq.empty
+  private var priorityQueue: Seq[QueuedPlayer] = Seq.empty
 
-  def getQueue: Seq[QueuedPlayer] = queue
+  def getNormalQueue: Seq[QueuedPlayer] = queue
 
-  def getWatchers: Seq[UserId] = watchers
+  def getPriorityQueue: Seq[QueuedPlayer] = priorityQueue
 
-  def upsertPlayer(player: QueuedPlayer): Boolean = {
+  def getRandomN(n: Int): Seq[QueuedPlayer] = Option.when(n > 0)(scala.util.Random.shuffle(queue).take(n)).getOrElse(Seq.empty)
+
+  def upsertNormalPlayer(player: QueuedPlayer): Boolean = {
     val res = this.remove(player.player.discordId)
     queue = queue.appended(player)
     res
   }
 
-  def upsertWatcher(userId: UserId): Boolean = {
-    val res = this.remove(userId)
-    watchers = watchers.appended(userId)
+  def upsertPriorityPlayer(player: QueuedPlayer): Boolean = {
+    val res = this.remove(player.stats.discordId)
+    priorityQueue = priorityQueue.appended(player)
     res
   }
 
-  def remove(playerId: UserId): Boolean =
-    if (this.contains(playerId)) {
-      queue = queue.filterNot(_.player.discordId == playerId)
-      watchers = watchers.filterNot(_ == playerId)
+  def removeNormalPlayer(playerId: UserId): Boolean =
+    if (this.containsNormalPlayer(playerId)) {
+      queue = queue.filterNot(_.stats.discordId == playerId)
       true
     } else {
       false
     }
 
-  def containsPlayer(playerId: UserId): Boolean = queue.exists(_.player.discordId == playerId)
+  def removePriorityPlayer(playerId: UserId): Boolean =
+    if (this.containsPriorityPlayer(playerId)) {
+      priorityQueue = priorityQueue.filterNot(_.stats.discordId == playerId)
+      true
+    } else {
+      false
+    }
 
-  def containsWatcher(watcherId: UserId): Boolean = watchers.contains(watcherId)
+  def remove(playerId: UserId): Boolean =
+    if (this.contains(playerId)) {
+      queue = queue.filterNot(_.player.discordId == playerId)
+      priorityQueue = priorityQueue.filterNot(_.player.discordId == playerId)
+      true
+    } else {
+      false
+    }
 
-  def contains(userId: UserId): Boolean = containsPlayer(userId) || containsWatcher(userId)
+  def containsNormalPlayer(playerId: UserId): Boolean = queue.exists(_.player.discordId == playerId)
 
-  def clearPlayers(): Unit = queue = Seq.empty
+  def containsPriorityPlayer(playerId: UserId): Boolean = priorityQueue.exists(_.stats.discordId == playerId)
 
-  def clearWatchers(): Unit = watchers = Seq.empty
+  def contains(userId: UserId): Boolean = containsNormalPlayer(userId) || containsPriorityPlayer(userId)
 
-  def clear(): Unit = {
-    clearPlayers()
-    clearWatchers()
+  def clearNormalQueue(): Unit = queue = Seq.empty
+
+  def clearPriorityQueue(): Unit = priorityQueue = Seq.empty
+
+  def clearAll(): Unit = {
+    clearNormalQueue()
+    clearPriorityQueue()
   }
 
-  def queueSize: Int = queue.length
+  def priorityQueueSize: Int = queue.length
 
-  def watchersSize: Int = watchers.length
+  def normalQueueSize: Int = priorityQueue.length
+
+  def queueSize: Int = normalQueueSize + priorityQueueSize
 
   def remaining(o: OngoingMatch): Seq[QueuedPlayer] = {
     val inGamePlayers = o.team1.seq ++ o.team2.seq
-    getQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.player.discordId))
+    val prioPlayers = getPriorityQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.player.discordId))
+    val queuePlayers = getNormalQueue.filterNot(p => inGamePlayers.exists(_.state.discordId == p.player.discordId))
+    prioPlayers ++ queuePlayers
+  }
+
+  def findPlayer(userId: UserId): Option[QueuedPlayer] = {
+    queue.find(_.stats.discordId == userId)
+      .orElse(priorityQueue.find(_.player.discordId == userId))
+  }
+
+  def getAll(players: Seq[UserId]): Seq[QueuedPlayer] = players.flatMap(p => findPlayer(p))
+
+  def updatePriorities(playingPlayers: Seq[MatchPlayer], remainingPlayers: Seq[QueuedPlayer]): Unit = {
+    getAll(playingPlayers.map(_.state.discordId)).map(upsertNormalPlayer)
+    remainingPlayers.map(upsertPriorityPlayer)
   }
 }

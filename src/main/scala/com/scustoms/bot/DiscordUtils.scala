@@ -12,6 +12,8 @@ import com.scustoms.services.{MatchService, QueueService}
 import scala.concurrent.ExecutionContext
 import com.scustoms.Utils.StringImprovements
 import com.scustoms.Utils.SeqImprovements
+import com.scustoms.bot.Emojis.negativeMark
+import com.scustoms.database.StaticReferences
 import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService.QueuedPlayer
 import com.scustoms.trueskill.RatingUtils.percentageFormat
@@ -32,6 +34,21 @@ object DiscordUtils {
     val react = CreateReaction(command.textChannel.id, command.message.id, emoji)
     val respond = command.textChannel.sendMessage(response)
     client.requestsHelper.runMany(react, respond)(command.cache).map(_ => ())
+  }
+
+  def respond[T](response: String)
+                (implicit client: DiscordClient, command: GuildMemberCommandMessage[T], ec: ExecutionContext): OptFuture[Unit] = {
+    client.requestsHelper.run(command.textChannel.sendMessage(response))(command.cache).map(_ => ())
+  }
+
+  def withErrorHandler[T](command: GuildMemberCommandMessage[T])(f: GuildMemberCommandMessage[T] => OptFuture[Unit])
+                         (implicit client: DiscordClient, ec: ExecutionContext): OptFuture[Unit] = {
+    try {
+      f(command)
+    } catch {
+      case err: Exception =>
+        DiscordUtils.reactAndRespond(negativeMark, s"Error: ${err.getMessage}")(client, command, ec)
+    }
   }
 
   def playersToStrings(team: MatchService.MatchTeam, columnSize: Int): Seq[String] = {
@@ -58,9 +75,9 @@ object DiscordUtils {
     val header = s"${"Role".pad(columnSize)}${"M. Rating".pad(columnSize)}${"C. Rating".pad(columnSize)}"
     val teamAPlayers = playersToStrings(m.team1, columnSize).mkString(s"\n${"TEAM 1".pad(columnSize)}$header\n", "\n", "")
     val teamBPlayers = playersToStrings(m.team2, columnSize).mkString(s"\n${"TEAM 2".pad(columnSize)}$header\n", "\n", "")
-    val remaining = remainingToStrings(remainingPlayers, columnSize).mkString(s"\n${"REMAINING".pad(columnSize)}${"Role".pad(columnSize)}\n", "\n", "")
+    val remaining = if (remainingPlayers.isEmpty) "" else remainingToStrings(remainingPlayers, columnSize).mkString(s"\n${"REMAINING".pad(columnSize)}${"Role".pad(columnSize)}\n", "\n", "")
     val quality = percentageFormat(m.quality * 100)
-    s"```Match quality: $quality%\n$teamAPlayers\n$teamBPlayers\n$remaining```"
+    s"Match quality: $quality%\n$teamAPlayers\n$teamBPlayers\n$remaining"
   }
 
   def playerToString(p: PlayerWithStatistics, tablePadding: Int): String = {
@@ -70,7 +87,7 @@ object DiscordUtils {
         Seq(role.toString, stats.games.toString, stats.winRatePercentage, stats.formattedMeanRating,
           stats.formattedConservativeRating).padConcat(tablePadding)
     }.mkString("\n")
-    s"```In-game name: ${p.gameUsername}\n\n$header\n$playerStats```".stripMargin
+    codeBlock(s"In-game name: ${p.gameUsername}\n\n$header\n$playerStats")
   }
 
   def parseWinningTeamA(parsed: Int): Option[Boolean] = parsed match {
@@ -101,13 +118,15 @@ object DiscordUtils {
       }
   }
 
-  def onlyInTextRoom[M[A] <: GuildCommandMessage[A]](allowedTextRoom: TextGuildChannelId): CommandFunction[M, M] = new CommandFunction[M, M] {
+  def allowedTextRoom[M[A] <: GuildCommandMessage[A]](allowedTextRoom: TextGuildChannelId): CommandFunction[M, M] = new CommandFunction[M, M] {
     override def flow[A]: Flow[M[A], Either[Option[CommandError], M[A]], NotUsed] =
       Flow[M[A]].map { m =>
-        if (m.textChannel.id == allowedTextRoom)
+        if (m.textChannel.id == allowedTextRoom || m.textChannel.id == StaticReferences.adminChannel)
           Right(m)
         else
           Left(None)
       }
   }
+
+  def codeBlock(s: String): String = s"```$s```"
 }

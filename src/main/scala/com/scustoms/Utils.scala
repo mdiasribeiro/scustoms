@@ -33,5 +33,7 @@ object Utils {
 
   implicit class SeqImprovements(val s: Seq[String]) {
     def padConcat(padding: Int): String = s.map(_.pad(padding)).reduceLeft(_ + _)
+
+    def ifNonEmpty(f: => String): String = if (s.isEmpty) "" else f
   }
 }
