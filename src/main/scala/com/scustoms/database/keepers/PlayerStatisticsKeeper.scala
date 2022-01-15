@@ -2,7 +2,7 @@ package com.scustoms.database.keepers
 
 import ackcord.data.UserId
 import com.scustoms.database.DatabaseManager
-import com.scustoms.database.DatabaseManager.DatabaseError
+import com.scustoms.database.DatabaseManager._
 import com.scustoms.trueskill.RatingUtils
 import com.scustoms.trueskill.RatingUtils.{percentageFormat, ratingFormat}
 import de.gesundkrank.jskills.{GameInfo, Rating}
@@ -12,20 +12,6 @@ import slick.lifted.ProvenShape
 import scala.concurrent.{ExecutionContext, Future}
 
 object PlayerStatisticsKeeper {
-  sealed trait PlayerStatisticsDatabaseError extends DatabaseError
-  final case object StatisticsAlreadyExists extends PlayerStatisticsDatabaseError {
-    def message: String = "Player statistics already exist"
-  }
-  final case object StatisticsNotFound extends PlayerStatisticsDatabaseError {
-    def message: String = "Player statistics could not be found in the database"
-  }
-  final case object FailedInsertion extends PlayerStatisticsDatabaseError {
-    def message: String = s"Failure when inserting in the database"
-  }
-  final case class UnexpectedError(err: String) extends PlayerStatisticsDatabaseError {
-    def message: String = s"Unexpected error has occurred: $err"
-  }
-
   type PlayersStatisticsTableTuple = (Long, Long, Double, Double, Long, Long)
 
   object PlayerStatistics {
@@ -67,52 +53,69 @@ object PlayerStatisticsKeeper {
       (id, playerDiscordId, ratingMean, ratingStdDev, wins, games)
   }
 
+  def defaultErrorHandler[T]: PartialFunction[Throwable, Either[DatabaseError, T]] = {
+    case err => Left(UnexpectedError(err.getMessage))
+  }
+
   val playersStatisticsTable: TableQuery[PlayerStatisticsTableSchema] = TableQuery[PlayerStatisticsTableSchema]
 }
 
 class PlayerStatisticsKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContext) {
   import PlayerStatisticsKeeper._
 
-  def insert(discordId: UserId): Future[Either[PlayerStatisticsDatabaseError, Long]] = {
-    databaseManager.runTransaction {
+  def insert(discordId: UserId): Future[Either[DatabaseError, Long]] =
+    databaseManager.run {
       (playersStatisticsTable returning playersStatisticsTable.map(_.id) += PlayerStatistics.emptyPlayerStatistics.*(discordId))
         .map {
-          case 0 => Left(FailedInsertion: PlayerStatisticsDatabaseError)
+          case 0 => Left(FailedInsertion: DatabaseError)
           case n => Right(n)
         }
-    } {
-      case err => Left(UnexpectedError(err.getMessage))
-    }
-  }
+    }(PlayerStatisticsKeeper.defaultErrorHandler)
 
-  def find(id: Long): Future[Either[PlayerStatisticsDatabaseError, PlayerStatistics]] = databaseManager.run {
-    playersStatisticsTable
-      .filter(p => p.id === id)
-      .result
-      .headOption
-      .map {
-        case Some(statisticsTuple) => Right(PlayerStatistics.fromTuple(statisticsTuple))
-        case None => Left(StatisticsNotFound: PlayerStatisticsDatabaseError)
+  def insertAllRoles(discordId: UserId): Future[Either[DatabaseError, Seq[Long]]] =
+    databaseManager.runTransaction {
+      (playersStatisticsTable returning playersStatisticsTable.map(_.id) ++= Seq(
+        PlayerStatistics.emptyPlayerStatistics.*(discordId),
+        PlayerStatistics.emptyPlayerStatistics.*(discordId),
+        PlayerStatistics.emptyPlayerStatistics.*(discordId),
+        PlayerStatistics.emptyPlayerStatistics.*(discordId),
+        PlayerStatistics.emptyPlayerStatistics.*(discordId)
+      )).map {
+        case s if s.isEmpty | s.contains(0L) => Left(FailedInsertion: DatabaseError)
+        case s => Right(s)
       }
-  } {
-    case err => Left(UnexpectedError(err.getMessage))
-  }
 
-  def update(playerStatistics: PlayerStatistics): Future[Boolean] = databaseManager.runTransaction {
-    playersStatisticsTable
-      .filter(p => p.id === playerStatistics.id)
-      .map(p => (p.ratingMean, p.ratingStdDev, p.wins, p.games))
-      .update((playerStatistics.rating.getMean, playerStatistics.rating.getStandardDeviation, playerStatistics.wins, playerStatistics.games))
-      .map(_ > 0)
-  } {
-    case _ => false
-  }
+    }(PlayerStatisticsKeeper.defaultErrorHandler)
 
-  def resetAll(gameInfo: GameInfo): Future[Int] = databaseManager.runTransaction {
-    playersStatisticsTable
-      .map(p => (p.ratingMean, p.ratingStdDev, p.wins, p.games))
-      .update((gameInfo.getInitialMean, gameInfo.getInitialStandardDeviation, 0, 0))
-  } {
-    case _ => 0
-  }
+  def find(id: Long): Future[Either[DatabaseError, PlayerStatistics]] =
+    databaseManager.run {
+      playersStatisticsTable
+        .filter(p => p.id === id)
+        .result
+        .headOption
+        .map {
+          case Some(statisticsTuple) => Right(PlayerStatistics.fromTuple(statisticsTuple))
+          case None => Left(StatisticsNotFound: DatabaseError)
+        }
+    }(PlayerStatisticsKeeper.defaultErrorHandler)
+
+  def update(playerStatistics: PlayerStatistics): Future[Boolean] =
+    databaseManager.runTransaction {
+      playersStatisticsTable
+        .filter(p => p.id === playerStatistics.id)
+        .map(p => (p.ratingMean, p.ratingStdDev, p.wins, p.games))
+        .update((playerStatistics.rating.getMean, playerStatistics.rating.getStandardDeviation, playerStatistics.wins, playerStatistics.games))
+        .map(_ > 0)
+    } {
+      case _ => false
+    }
+
+  def resetAll(gameInfo: GameInfo): Future[Int] =
+    databaseManager.runTransaction {
+      playersStatisticsTable
+        .map(p => (p.ratingMean, p.ratingStdDev, p.wins, p.games))
+        .update((gameInfo.getInitialMean, gameInfo.getInitialStandardDeviation, 0, 0))
+    } {
+      case _ => 0
+    }
 }

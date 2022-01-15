@@ -244,7 +244,7 @@ class MatchService(matchKeeper: MatchKeeper, playerService: PlayerService)(impli
       botResult <- playerService.findAndResolve(team.botId)
       supportResult <- playerService.findAndResolve(team.supportId)
     } yield (topResult, jungleResult, midResult, botResult, supportResult) match {
-      case (Some(top), Some(jungle), Some(mid), Some(bot), Some(support)) =>
+      case (Right(top), Right(jungle), Right(mid), Right(bot), Right(support)) =>
         Some(MatchTeam(
           MatchPlayer(MatchService.Top, top),
           MatchPlayer(MatchService.Jungle, jungle),

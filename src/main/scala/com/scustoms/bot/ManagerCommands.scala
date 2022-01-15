@@ -8,10 +8,10 @@ import ackcord.{DiscordClient, JsonSome, OptFuture}
 import akka.NotUsed
 import com.scustoms.Utils
 import com.scustoms.bot.Emojis.{negativeMark, positiveMark}
-import com.scustoms.database.StaticReferences
+import com.scustoms.database.{DatabaseManager, StaticReferences}
 import com.scustoms.database.keepers.MatchKeeper.{StoredMatch, StoredMatchTeam}
-import com.scustoms.database.keepers.PlayerKeeper
-import com.scustoms.services.MatchService.OngoingMatch
+import com.scustoms.services.MatchService.{MatchPlayer, OngoingMatch}
+import com.scustoms.services.PlayerService.PlayerWithStatistics
 import com.scustoms.services.QueueService.QueuedPlayer
 import com.scustoms.services.{MatchService, PlayerService, QueueService}
 import com.scustoms.trueskill.RatingUtils
@@ -61,18 +61,18 @@ class ManagerCommands(config: Config,
     val parsedUserId = DiscordUtils.getUserIdFromMention(mention)
     val parsedRole = role.map(QueueService.parseRole).getOrElse(Some(QueueService.Fill))
     (parsedUserId, parsedRole) match {
-      case (Some(userId), Some(role)) =>
+      case (Right(userId), Some(role)) =>
         OptFuture.fromFuture(playerService.find(userId)).map {
-          case Some(player) =>
+          case Right(player) =>
             queueLambda(QueueService.QueuedPlayer(role, player))
             DiscordUtils.reactAndRespond(positiveMark, s"$mention was added to the queue with role: $role")
-          case None =>
+          case Left(_) =>
             DiscordUtils.reactAndRespond(negativeMark, s"$mention could not be found. Make sure he is registered.")
         }
-      case (Some(_), None) =>
-        DiscordUtils.reactAndRespond(negativeMark, "Player role could not be parsed")
-      case (None, _) =>
-        DiscordUtils.reactAndRespond(negativeMark, "Mention could not be parsed")
+      case (Right(_), None) =>
+        DiscordUtils.reactAndRespond(negativeMark, s"Player role `$role` could not be parsed")
+      case (Left(err), _) =>
+        DiscordUtils.reactAndRespond(negativeMark, err.message)
     }
   }
 
@@ -112,14 +112,14 @@ class ManagerCommands(config: Config,
       val parsedUserId2 = DiscordUtils.getUserIdFromMention(command.parsed._2)
       val ongoingMatch = matchService.ongoingMatch
       (parsedUserId1, parsedUserId2, ongoingMatch) match {
-        case (Some(userId1), Some(userId2), Some(ongoingMatch)) =>
+        case (Right(userId1), Right(userId2), Some(ongoingMatch)) =>
           val result = (ongoingMatch.contains(userId1), ongoingMatch.contains(userId2)) match {
             case (true, true) =>
               Future.successful(matchService.swapPlayers(userId1, userId2))
             case (true, false) =>
-              playerService.findAndResolve(userId2).map(_.flatMap(player2Data => matchService.swapPlayer(userId1, player2Data)))
+              playerService.findAndResolve(userId2).map(_.toOption.flatMap(player2Data => matchService.swapPlayer(userId1, player2Data)))
             case (false, true) =>
-              playerService.findAndResolve(userId1).map(_.flatMap(player1Data => matchService.swapPlayer(userId2, player1Data)))
+              playerService.findAndResolve(userId1).map(_.toOption.flatMap(player1Data => matchService.swapPlayer(userId2, player1Data)))
             case (false, false) =>
               Future.successful(None)
           }
@@ -148,21 +148,34 @@ class ManagerCommands(config: Config,
     .parsing[String]
     .asyncOpt(implicit command => {
       DiscordUtils.getUserIdFromMention(command.parsed) match {
-        case Some(userId) if queueService.containsNormalPlayer(userId) =>
+        case Right(userId) if queueService.containsNormalPlayer(userId) =>
           queueService.remove(userId)
-          DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} has been removed from the queue")
-        case Some(userId) if queueService.containsPriorityPlayer(userId) =>
+          DiscordUtils.respond(s"${command.parsed} has been removed from the queue")
+        case Right(userId) if queueService.containsPriorityPlayer(userId) =>
           queueService.remove(userId)
-          DiscordUtils.reactAndRespond(positiveMark, s"${command.parsed} has been removed from the priority queue")
-        case Some(_) =>
+          DiscordUtils.respond(s"${command.parsed} has been removed from the priority queue")
+        case Right(_) =>
           DiscordUtils.reactAndRespond(negativeMark, "Player was not found in the queue")
-        case None =>
-          DiscordUtils.reactAndRespond(negativeMark, "Mention could not be parsed")
+        case Left(err) =>
+          DiscordUtils.reactAndRespond(negativeMark, err.message)
       }
     })
 
   final val StartString = "startMatch"
   final val StartShortString = "start"
+  def partitionResolvePlayers(players: Seq[QueuedPlayer]): Future[Either[DatabaseManager.DatabaseError, (Seq[MatchPlayer], Seq[PlayerWithStatistics])]] = {
+    val resolvedPlayers = players.map(queuedPlayer =>
+      playerService.resolvePlayer(queuedPlayer.player)
+        .map(_.map(resolvedPlayer => (queuedPlayer.role.toMatchRole, resolvedPlayer)))
+    )
+    for {
+      resolvedPlayersFuture <- Future.sequence(resolvedPlayers)
+      resolvedP = Utils.sequenceEither(resolvedPlayersFuture)
+    } yield resolvedP.map(_.partitionMap {
+      case (Some(role), p) => Left(MatchPlayer(role, p))
+      case (None, p) => Right(p)
+    })
+  }
   val start: NamedCommand[NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
     .named(managerCommandSymbols, Seq(StartString, StartShortString))
@@ -170,15 +183,21 @@ class ManagerCommands(config: Config,
     .asyncOpt(DiscordUtils.withErrorHandler(_) {
       implicit m => {
         val prioPlayers = queueService.getPriorityQueue
-        val players = if (prioPlayers.isEmpty)
+        val players = if (prioPlayers.isEmpty) {
           queueService.getNormalQueue
-        else
+        } else {
           prioPlayers ++ queueService.getRandomN(10 - prioPlayers.length)
-        val startingMatch = RatingUtils.calculateRoleMatch(players)
-        matchService.ongoingMatch = Some(startingMatch)
-        val remainingPlayers = queueService.remaining(startingMatch)
-        val msg = DiscordUtils.ongoingMatchToString(startingMatch, remainingPlayers, tablePadding)
-        client.requestsHelper.run(m.textChannel.sendMessage(DiscordUtils.codeBlock(msg))).map(_ => ())
+        }
+        OptFuture.fromFuture(partitionResolvePlayers(players)).map {
+          case Left(err) =>
+            DiscordUtils.reactAndRespond(negativeMark, err.message)
+          case Right((rolePlayers, fillPlayers)) =>
+            val startingMatch = RatingUtils.calculateRoleMatch(rolePlayers, fillPlayers)
+            matchService.ongoingMatch = Some(startingMatch)
+            val remainingPlayers = queueService.remaining(startingMatch)
+            val msg = DiscordUtils.ongoingMatchToString(startingMatch, remainingPlayers, tablePadding)
+            client.requestsHelper.run(m.textChannel.sendMessage(DiscordUtils.codeBlock(msg))).map(_ => ())
+        }
       }
     })
 
@@ -229,29 +248,26 @@ class ManagerCommands(config: Config,
     .parsing[(String, String)](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit m => {
       val result: Either[String, Future[Either[String, (String, UserId)]]] = for {
-        targetId <- DiscordUtils.getUserIdFromMention(m.parsed._1).toRight("Mention could not be parsed")
-        targetUser <- targetId.resolve.toRight(s"Player ${m.parsed._1} could not be found in this server")
+        targetId <- DiscordUtils.getUserIdFromMention(m.parsed._1).left.map(_.message)
+        targetUser <- targetId.resolve.toRight(DiscordUtils.PlayerNotInServer(m.parsed._1).message)
       } yield playerService.insert(targetId, targetUser.username, m.parsed._2).map {
         case Right(_) =>
           Right((s"Player '${targetUser.username}' successfully added", targetId))
-        case Left(PlayerKeeper.PlayerAlreadyExists) =>
-          Left(s"Player '${targetUser.username}' already exists")
-        case Left(_) =>
-          Left("Unknown error occurred")
+        case Left(err) =>
+          Left(err.message)
       }
-      val flattenedResult: OptFuture[Either[String, (String, UserId)]] = result match {
-        case Left(s) => OptFuture.pure(Left(s))
-        case Right(f) => OptFuture.fromFuture(f)
-      }
-      flattenedResult.flatMap {
-        case Right((response, userId)) =>
-          val changeRole = AddGuildMemberRole(m.guild.id, userId, StaticReferences.customsRoleId)
-          val react = CreateReaction(m.textChannel.id, m.message.id, positiveMark)
-          val respond = m.textChannel.sendMessage(response)
-          client.requestsHelper.runMany(react, respond, changeRole).map(_ => ())
-        case Left(error) =>
-          DiscordUtils.reactAndRespond(negativeMark, error)
-      }
+
+      OptFuture
+        .fromFuture(Utils.foldEitherOfFuture(result).map(_.flatten))
+        .flatMap {
+          case Right((response, userId)) =>
+            val changeRole = AddGuildMemberRole(m.guild.id, userId, StaticReferences.customsRoleId)
+            val react = CreateReaction(m.textChannel.id, m.message.id, positiveMark)
+            val respond = m.textChannel.sendMessage(response)
+            client.requestsHelper.runMany(react, respond, changeRole).map(_ => ())
+          case Left(error) =>
+            DiscordUtils.reactAndRespond(negativeMark, error)
+        }
     })
 
   final val RenamePlayerString = "renamePlayer"
@@ -263,12 +279,11 @@ class ManagerCommands(config: Config,
     .parsing[(String, String)](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit m => {
       val result = DiscordUtils.getUserIdFromMention(m.parsed._1)
-        .toRight("Mention could not be parsed")
         .map(targetId => playerService.updateGameUsername(targetId, m.parsed._2))
 
       OptFuture.fromFuture(Utils.foldEitherOfFuture(result)).flatMap {
         case Left(err) =>
-          DiscordUtils.reactAndRespond(negativeMark, err)
+          DiscordUtils.reactAndRespond(negativeMark, err.message)
         case Right(Left(_)) =>
           DiscordUtils.reactAndRespond(negativeMark, "Player could not be found in the database. Make sure they are registered.")
         case Right(Right(_)) =>
@@ -288,9 +303,9 @@ class ManagerCommands(config: Config,
       (winningTeam, matchService.ongoingMatch) match {
         case (_, None) =>
           DiscordUtils.reactAndRespond(negativeMark, s"There is no ongoing match.")
-        case (None, _) =>
-          DiscordUtils.reactAndRespond(negativeMark, "Team number is not valid. Must be 1 or 2.")
-        case (Some(team1Won), Some(ongoingMatch)) =>
+        case (Left(err), _) =>
+          DiscordUtils.reactAndRespond(negativeMark, err.message)
+        case (Right(team1Won), Some(ongoingMatch)) =>
           matchService.ongoingMatch = None
           val playingPlayers = ongoingMatch.team1.seq ++ ongoingMatch.team2.seq
           val remainingPlayers = queueService.remaining(ongoingMatch)
@@ -313,11 +328,11 @@ class ManagerCommands(config: Config,
     .asyncOpt(implicit m => {
       OptFuture.fromFuture(matchService.getLastN(1))
         .flatMap(lastMatch => (lastMatch, DiscordUtils.parseWinningTeamA(m.parsed)) match {
-          case (Seq(lastMatch), Some(team1Won)) =>
+          case (Seq(lastMatch), Right(team1Won)) =>
             matchService.changeResult(lastMatch.id, team1Won)
             DiscordUtils.reactAndRespond(positiveMark, "Last match result has been changed.")
-          case (_, None) =>
-            DiscordUtils.reactAndRespond(negativeMark, "Team number is not valid. Must be 1 or 2.")
+          case (_, Left(err)) =>
+            DiscordUtils.reactAndRespond(negativeMark, err.message)
           case _ =>
             DiscordUtils.reactAndRespond(negativeMark, "Last match could not be retrieved.")
         })
@@ -326,7 +341,7 @@ class ManagerCommands(config: Config,
   final val AddMatchString = "addMatch"
   case class AddMatchParams(t1: String, j1: String, m1: String, b1: String, s1: String,
                             t2: String, j2: String, m2: String, b2: String, s2: String, winningTeam: Int)
-  def resolveAddMatch(m: AddMatchParams): Option[StoredMatch] =
+  def resolveAddMatch(m: AddMatchParams): Either[DiscordUtils.DiscordError, StoredMatch] =
     for {
       t1 <- DiscordUtils.getUserIdFromMention(m.t1)
       j1 <- DiscordUtils.getUserIdFromMention(m.j1)
@@ -353,7 +368,7 @@ class ManagerCommands(config: Config,
     .parsing[AddMatchParams](MessageParser.Auto.deriveParser)
     .asyncOpt(implicit m => {
       resolveAddMatch(m.parsed) match {
-        case Some(params) =>
+        case Right(params) =>
           OptFuture.fromFuture(matchService.resolveStoredMatch(params)).map {
             case Some(resolvedMatch) =>
               val ongoingMatch = OngoingMatch.fromResolvedStoredMatch(resolvedMatch)
@@ -364,8 +379,8 @@ class ManagerCommands(config: Config,
             case None =>
               DiscordUtils.reactAndRespond(negativeMark, "A player could not be resolved, make sure everyone is registered.")
           }
-        case None =>
-          DiscordUtils.reactAndRespond(negativeMark, "Error parsing parameters, make sure mentions and teamAWon value are correct.")
+        case Left(err) =>
+          DiscordUtils.reactAndRespond(negativeMark, err.message)
       }
     })
 

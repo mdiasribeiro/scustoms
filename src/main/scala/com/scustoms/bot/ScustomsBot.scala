@@ -37,6 +37,8 @@ class ScustomsBot(discordToken: String, config: Config) {
   client.commands.bulkRunNamed(managerCommands.commandList: _*)
   client.commands.bulkRunNamed(adminCommands.commandList: _*)
 
+  val debugMode: Boolean = config.getBoolean("scustoms.debugMode")
+
   client.onEventAsync { implicit c => {
     case APIMessage.Ready(_) =>
       println("Now ready")
@@ -45,7 +47,8 @@ class ScustomsBot(discordToken: String, config: Config) {
       println("Back online")
       firstStart = false
       val channel = OptFuture.fromOption(StaticReferences.botChannel.resolve(StaticReferences.guildId))
-      channel.map(channel => client.requestsHelper.run(channel.sendMessage("I'm back online.")))
+      val debug = if (debugMode) " (running debug version)" else ""
+      channel.map(channel => client.requestsHelper.run(channel.sendMessage(s"I'm back online$debug")))
   }}
 
   client.login()

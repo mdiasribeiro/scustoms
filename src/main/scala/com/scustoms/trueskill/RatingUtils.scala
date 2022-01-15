@@ -2,8 +2,7 @@ package com.scustoms.trueskill
 
 import com.scustoms.services.MatchService._
 import com.scustoms.services.PlayerService.PlayerWithStatistics
-import com.scustoms.services.{MatchService, QueueService}
-import com.scustoms.services.QueueService.QueuedPlayer
+import com.scustoms.services.MatchService
 import de.gesundkrank.jskills.GameInfo
 
 object RatingUtils {

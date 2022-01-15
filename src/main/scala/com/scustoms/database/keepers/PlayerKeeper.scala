@@ -2,21 +2,15 @@ package com.scustoms.database.keepers
 
 import ackcord.data.UserId
 import com.scustoms.database.DatabaseManager
-import com.scustoms.database.DatabaseManager.DatabaseError
+import com.scustoms.database.DatabaseManager._
 
 import scala.concurrent.{ExecutionContext, Future}
 import slick.jdbc.SQLiteProfile.api._
 import slick.lifted.ProvenShape
 
-object PlayerKeeper {
-  sealed trait PlayerDatabaseError extends DatabaseError
-  final case object PlayerAlreadyExists extends PlayerDatabaseError {
-    def message: String = "Player already exists in the database"
-  }
-  final case object PlayerNotFound extends PlayerDatabaseError {
-    def message: String = "Player could not be found in the database"
-  }
+import java.sql.SQLException
 
+object PlayerKeeper {
   type PlayerTableTuple = (Long, Long, String, String, Long, Long, Long, Long, Long)
 
   object StoredPlayer {
@@ -47,58 +41,78 @@ object PlayerKeeper {
       (id, discordId, discordUsername, gameUsername, topStatsId, jungleStatsId, midStatsId, botStatsId, supportStatsId)
   }
 
+  def defaultErrorHandler[T]: PartialFunction[Throwable, Either[DatabaseError, T]] = {
+    case err => Left(UnexpectedError(err.getMessage))
+  }
+
   val playersTable: TableQuery[PlayerTableSchema] = TableQuery[PlayerTableSchema]
 }
 
 class PlayerKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContext) {
   import PlayerKeeper._
 
-  def insert(playerCreate: StoredPlayer): Future[Either[PlayerDatabaseError, Long]] = databaseManager.run {
-    playersTable returning playersTable.map(_.id) += playerCreate.*
-  }.map(Right(_)).recover { case _ => Left(PlayerAlreadyExists) }
+  def insert(playerCreate: StoredPlayer): Future[Either[DatabaseError, Long]] = {
+    databaseManager.runTransaction {
+      (playersTable returning playersTable.map(_.id) += playerCreate.*)
+        .map {
+          case 0 => Left(PlayerAlreadyExists: DatabaseError)
+          case id => Right(id)
+        }
+    } {
+      case err: SQLException =>
+        println(s"Got SQL exception: ${err.getMessage}")
+        Left(PlayerAlreadyExists)
+      case err: Throwable =>
+        Left(UnexpectedError(err.getMessage))
+    }
+  }
 
   def getAll: Future[Seq[StoredPlayer]] = databaseManager.run {
     playersTable
       .result
       .map(_.map(StoredPlayer.fromTuple))
-  }
+  }()
 
-  def find(discordId: UserId): Future[Either[PlayerDatabaseError, StoredPlayer]] = databaseManager.run {
-    playersTable
-      .filter(p => p.discordId === discordId.toUnsignedLong)
-      .result
-      .headOption
-      .map {
-        case Some(playerTuple) => Right(StoredPlayer.fromTuple(playerTuple))
-        case None => Left(PlayerNotFound)
-      }
-  }
+  def find(discordId: UserId): Future[Either[DatabaseError, StoredPlayer]] =
+    databaseManager.run {
+      playersTable
+        .filter(p => p.discordId === discordId.toUnsignedLong)
+        .result
+        .headOption
+        .map {
+          case Some(playerTuple) => Right(StoredPlayer.fromTuple(playerTuple))
+          case None => Left(PlayerNotFound: DatabaseError)
+        }
+    }(PlayerKeeper.defaultErrorHandler)
 
-  def findAll(playerIds: Seq[UserId]): Future[Either[DatabaseError, Seq[StoredPlayer]]] = databaseManager.run {
-    val players = playerIds.map(_.toUnsignedLong)
-    playersTable
-      .filter(p => p.discordId.inSet(players))
-      .result
-      .map {
-        case foundPlayers if foundPlayers.length == players.length =>
-          Right(foundPlayers.map(StoredPlayer.fromTuple))
-        case _ =>
-          Left(PlayerNotFound)
-      }
-  }
+  def findAll(playerIds: Seq[UserId]): Future[Either[DatabaseError, Seq[StoredPlayer]]] =
+    databaseManager.run {
+      val players = playerIds.map(_.toUnsignedLong)
+      playersTable
+        .filter(p => p.discordId.inSet(players))
+        .result
+        .map {
+          case foundPlayers if foundPlayers.length == players.length =>
+            Right(foundPlayers.map(StoredPlayer.fromTuple))
+          case _ =>
+            Left(PlayerNotFound: DatabaseError)
+        }
+    }(PlayerKeeper.defaultErrorHandler)
 
-  def exists(discordId: UserId): Future[Boolean] = databaseManager.run {
-    playersTable
-      .filter(p => p.discordId === discordId.toUnsignedLong)
-      .exists
-      .result
-  }
+  def exists(discordId: UserId): Future[Boolean] =
+    databaseManager.run {
+      playersTable
+        .filter(p => p.discordId === discordId.toUnsignedLong)
+        .exists
+        .result
+    }()
 
-  def updateGameUsername(discordId: UserId, gameUsername: String): Future[Boolean] = databaseManager.runTransaction {
-    playersTable
-      .filter(p => p.discordId === discordId.toUnsignedLong)
-      .map(p => p.gameUsername)
-      .update(gameUsername)
-      .map(_ > 0)
-  }
+  def updateGameUsername(discordId: UserId, gameUsername: String): Future[Boolean] =
+    databaseManager.runTransaction {
+      playersTable
+        .filter(p => p.discordId === discordId.toUnsignedLong)
+        .map(p => p.gameUsername)
+        .update(gameUsername)
+        .map(_ > 0)
+    }()
 }

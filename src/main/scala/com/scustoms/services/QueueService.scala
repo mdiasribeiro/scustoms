@@ -2,7 +2,7 @@ package com.scustoms.services
 
 import ackcord.data.UserId
 import com.scustoms.database.keepers.PlayerKeeper.StoredPlayer
-import com.scustoms.services.MatchService.{MatchRole, OngoingMatch}
+import com.scustoms.services.MatchService.{MatchPlayer, MatchRole, OngoingMatch}
 import com.scustoms.services.QueueService.QueuedPlayer
 
 object QueueService {
@@ -69,14 +69,14 @@ class QueueService {
   }
 
   def upsertPriorityPlayer(player: QueuedPlayer): Boolean = {
-    val res = this.remove(player.stats.discordId)
+    val res = this.remove(player.player.discordId)
     priorityQueue = priorityQueue.appended(player)
     res
   }
 
   def removeNormalPlayer(playerId: UserId): Boolean =
     if (this.containsNormalPlayer(playerId)) {
-      queue = queue.filterNot(_.stats.discordId == playerId)
+      queue = queue.filterNot(_.player.discordId == playerId)
       true
     } else {
       false
@@ -84,7 +84,7 @@ class QueueService {
 
   def removePriorityPlayer(playerId: UserId): Boolean =
     if (this.containsPriorityPlayer(playerId)) {
-      priorityQueue = priorityQueue.filterNot(_.stats.discordId == playerId)
+      priorityQueue = priorityQueue.filterNot(_.player.discordId == playerId)
       true
     } else {
       false
@@ -101,7 +101,7 @@ class QueueService {
 
   def containsNormalPlayer(playerId: UserId): Boolean = queue.exists(_.player.discordId == playerId)
 
-  def containsPriorityPlayer(playerId: UserId): Boolean = priorityQueue.exists(_.stats.discordId == playerId)
+  def containsPriorityPlayer(playerId: UserId): Boolean = priorityQueue.exists(_.player.discordId == playerId)
 
   def contains(userId: UserId): Boolean = containsNormalPlayer(userId) || containsPriorityPlayer(userId)
 
@@ -128,7 +128,7 @@ class QueueService {
   }
 
   def findPlayer(userId: UserId): Option[QueuedPlayer] = {
-    queue.find(_.stats.discordId == userId)
+    queue.find(_.player.discordId == userId)
       .orElse(priorityQueue.find(_.player.discordId == userId))
   }
 

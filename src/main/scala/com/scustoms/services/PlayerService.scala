@@ -2,9 +2,9 @@ package com.scustoms.services
 
 import ackcord.data.UserId
 import com.scustoms.Utils
-import com.scustoms.database.DatabaseManager.DatabaseError
-import com.scustoms.database.keepers.PlayerKeeper.{PlayerAlreadyExists, PlayerDatabaseError, PlayerNotFound, StoredPlayer}
-import com.scustoms.database.keepers.PlayerStatisticsKeeper.{PlayerStatistics, PlayerStatisticsDatabaseError}
+import com.scustoms.database.DatabaseManager._
+import com.scustoms.database.keepers.PlayerKeeper.StoredPlayer
+import com.scustoms.database.keepers.PlayerStatisticsKeeper.PlayerStatistics
 import com.scustoms.database.keepers.{PlayerKeeper, PlayerStatisticsKeeper}
 import com.scustoms.services.MatchService.{MatchPlayer, MatchRole}
 import com.scustoms.trueskill.RatingUtils
@@ -67,38 +67,42 @@ object PlayerService {
 class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerStatisticsKeeper)(implicit ec: ExecutionContext) {
   import PlayerService._
 
-  def insert(discordId: UserId, discordUsername: String, gameUsername: String): Future[Either[DatabaseError, Long]] = {
+  def insert(discordId: UserId, discordUsername: String, gameUsername: String): Future[Either[DatabaseError, Long]] =
     exists(discordId).flatMap {
       case false =>
         for {
-          top <- playerStatisticsKeeper.insert(discordId)
-          jungle <- playerStatisticsKeeper.insert(discordId)
-          mid <- playerStatisticsKeeper.insert(discordId)
-          bot <- playerStatisticsKeeper.insert(discordId)
-          support <- playerStatisticsKeeper.insert(discordId)
-          playerCreate = StoredPlayer(0L, discordId, discordUsername, gameUsername, top, jungle, mid, bot, support)
-          insertResult <- playerKeeper.insert(playerCreate)
-        } yield insertResult
+          topTry <- playerStatisticsKeeper.insert(discordId)
+          junTry <- playerStatisticsKeeper.insert(discordId)
+          midTry <- playerStatisticsKeeper.insert(discordId)
+          botTry <- playerStatisticsKeeper.insert(discordId)
+          supTry <- playerStatisticsKeeper.insert(discordId)
+          insertResult = for {
+            top <- topTry
+            jun <- junTry
+            mid <- midTry
+            bot <- botTry
+            sup <- supTry
+          } yield playerKeeper.insert(StoredPlayer(0L, discordId, discordUsername, gameUsername, top, jun, mid, bot, sup))
+          foldedFuture <- Utils.foldEitherOfFuture(insertResult)
+        } yield foldedFuture.flatten
       case true =>
         Future.successful(Left(PlayerAlreadyExists))
     }
-  }
 
-  def update(statistics: PlayerStatistics): Future[Int] =
+  def update(statistics: PlayerStatistics): Future[Boolean] =
     playerStatisticsKeeper.update(statistics)
 
-  def updateGameUsername(playerId: UserId, username: String): Future[Either[PlayerDatabaseError, Boolean]] = {
+  def updateGameUsername(playerId: UserId, username: String): Future[Either[DatabaseError, Boolean]] =
     exists(playerId).flatMap {
       case true =>
         playerKeeper.updateGameUsername(playerId, username).map(Right(_))
       case false =>
-        Future.successful(Left(PlayerKeeper.PlayerNotFound))
+        Future.successful(Left(PlayerNotFound))
     }
-  }
 
   def exists(discordId: UserId): Future[Boolean] = playerKeeper.exists(discordId)
 
-  def resolvePlayer(player: PlayerKeeper.StoredPlayer): Future[Either[PlayerStatisticsDatabaseError, PlayerWithStatistics]] = {
+  def resolvePlayer(player: PlayerKeeper.StoredPlayer): Future[Either[DatabaseError, PlayerWithStatistics]] =
     for {
       topResult <- playerStatisticsKeeper.find(player.topStatsId)
       jungleResult <- playerStatisticsKeeper.find(player.jungleStatsId)
@@ -109,40 +113,34 @@ class PlayerService(playerKeeper: PlayerKeeper, playerStatisticsKeeper: PlayerSt
       case (Right(top), Right(jungle), Right(mid), Right(bot), Right(support)) =>
         Right(PlayerWithStatistics(player.discordId, player.discordUsername, player.gameUsername, top, jungle, mid, bot, support))
       case _ =>
-        Left(PlayerStatisticsKeeper.StatisticsNotFound)
+        Left(StatisticsNotFound)
     }
-  }
 
-  def resolveAll(players: Seq[PlayerKeeper.StoredPlayer]): Future[Either[PlayerDatabaseError, Seq[PlayerWithStatistics]]] = {
+  def resolveAll(players: Seq[PlayerKeeper.StoredPlayer]): Future[Either[DatabaseError, Seq[PlayerWithStatistics]]] =
     for {
       resolvedPlayers <- Future.sequence(players.map(foundPs => resolvePlayer(foundPs)))
-    } yield if (resolvedPlayers.contains(None)) Left(PlayerNotFound) else Right(resolvedPlayers.flatten)
-  }
+      foldedPlayers = Utils.sequenceEither(resolvedPlayers)
+    } yield foldedPlayers
 
-  def find(discordId: UserId): Future[Option[StoredPlayer]] = playerKeeper.find(discordId)
+  def find(discordId: UserId): Future[Either[DatabaseError, StoredPlayer]] = playerKeeper.find(discordId)
 
-  def findAndResolve(discordId: UserId): Future[Option[PlayerWithStatistics]] = {
-    find(discordId).flatMap {
-      case Some(player) =>
-        resolvePlayer(player)
-      case None =>
-        Future.successful(None)
-    }
-  }
+  def findAndResolve(discordId: UserId): Future[Either[DatabaseError, PlayerWithStatistics]] =
+    for {
+      player <- find(discordId)
+      resolvedPlayer <- Utils.foldEitherOfFuture(player.map(resolvePlayer))
+    } yield resolvedPlayer.flatten
 
-  def findAndResolveAll(players: Seq[UserId]): Future[Either[PlayerDatabaseError, Seq[PlayerWithStatistics]]] = {
+  def findAndResolveAll(players: Seq[UserId]): Future[Either[DatabaseError, Seq[PlayerWithStatistics]]] =
     for {
       foundAllResult <- playerKeeper.findAll(players)
-      resolvedPlayerOpt <- Utils.foldEitherOfFutureSeq(foundAllResult.map(foundPs => foundPs.map(resolvePlayer)))
-    } yield resolvedPlayerOpt.map(_.flatten)
-  }
+      resolvedAll <- Utils.foldEitherOfFuture(foundAllResult.map(resolveAll)).map(_.flatten)
+    } yield resolvedAll
 
-  def getAllPlayers: Future[Seq[PlayerWithStatistics]] = {
+  def getAllPlayers: Future[Either[DatabaseError, Seq[PlayerWithStatistics]]] =
     for {
       foundAllResult <- playerKeeper.getAll
-      resolvedPlayerOpt <- Future.sequence(foundAllResult.map(resolvePlayer))
-    } yield resolvedPlayerOpt.flatten
-  }
+      resolvedPlayers <- resolveAll(foundAllResult)
+    } yield resolvedPlayers
 
   def resetRating: Future[Int] = playerStatisticsKeeper.resetAll(RatingUtils.defaultGameInfo)
 }

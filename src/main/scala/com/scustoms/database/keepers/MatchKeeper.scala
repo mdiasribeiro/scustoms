@@ -55,23 +55,21 @@ object MatchKeeper {
 class MatchKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContext) {
   import MatchKeeper._
 
-  def insert(m: StoredMatch): Future[Int] = {
+  def insert(m: StoredMatch): Future[Int] =
     databaseManager.run {
       storedMatchesTable += m.*
-    }
-  }
+    }()
 
-  def getLastN(n: Int): Future[Seq[StoredMatch]] = {
+  def getLastN(n: Int): Future[Seq[StoredMatch]] =
     databaseManager.run {
       storedMatchesTable
         .sortBy(_.id.desc)
         .take(n)
         .result
         .map(_.map(StoredMatch.fromTuple))
-    }
-  }
+    }()
 
-  def get(limit: Int, offset: Int): Future[Seq[StoredMatch]] = {
+  def get(limit: Int, offset: Int): Future[Seq[StoredMatch]] =
     databaseManager.run {
       storedMatchesTable
         .sortBy(_.id)
@@ -79,23 +77,20 @@ class MatchKeeper(databaseManager: DatabaseManager)(implicit ec: ExecutionContex
         .take(limit)
         .result
         .map(_.map(StoredMatch.fromTuple))
-    }
-  }
+    }()
 
-  def changeResult(id: Long, team1Won: Boolean): Future[Int] = {
+  def changeResult(id: Long, team1Won: Boolean): Future[Int] =
     databaseManager.run {
       storedMatchesTable
         .filter(storedMatch => storedMatch.id === id)
         .map(p => p.team1Won)
         .update(team1Won)
-    }
-  }
+    }()
 
-  def remove(id: Long): Future[Int] = {
+  def remove(id: Long): Future[Int] =
     databaseManager.run {
       storedMatchesTable
         .filter(storedMatch => storedMatch.id === id)
         .delete
-    }
-  }
+    }()
 }

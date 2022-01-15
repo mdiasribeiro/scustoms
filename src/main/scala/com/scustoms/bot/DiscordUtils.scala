@@ -19,14 +19,35 @@ import com.scustoms.services.QueueService.QueuedPlayer
 import com.scustoms.trueskill.RatingUtils.percentageFormat
 
 object DiscordUtils {
-  def getUserIdFromMention(mention: String): Option[UserId] = {
-    Option.when(mention.startsWith("<@") && mention.endsWith(">")) {
-      if (mention.startsWith("<@!")) {
-        UserId(mention.slice(3, mention.length - 1))
-      } else {
-        UserId(mention.slice(2, mention.length - 1))
-      }
-    }
+  sealed trait DiscordError {
+    def message: String
+  }
+  case class MentionParseFailed(mention: String) extends DiscordError {
+    val message = s"Failed to parse `$mention` as a player mention"
+  }
+  case class PlayerNotInServer(player: String) extends DiscordError {
+    val message = s"Player `$player` could not be found in this server"
+  }
+  case class WinningTeamParseFailed(team: Int) extends DiscordError {
+    val message = s"Team number `$team` is not valid, must be either 1 or 2"
+  }
+
+  def getUserIdFromMention(mention: String): Either[DiscordError, UserId] =
+    Either.cond(mention.startsWith("<@") && mention.endsWith(">"),
+      {
+        if (mention.startsWith("<@!"))
+          UserId(mention.slice(3, mention.length - 1))
+        else
+          UserId(mention.slice(2, mention.length - 1))
+      },
+      MentionParseFailed(mention)
+    )
+
+
+  def parseWinningTeamA(parsed: Int): Either[DiscordError, Boolean] = parsed match {
+    case 1 => Right(true)
+    case 2 => Right(false)
+    case n => Left(WinningTeamParseFailed(n))
   }
 
   def reactAndRespond[T](emoji: String, response: String)
@@ -81,19 +102,22 @@ object DiscordUtils {
   }
 
   def playerToString(p: PlayerWithStatistics, tablePadding: Int): String = {
-    val header = Seq("Role", "# Games", "Win rate", "M. Rating", "C. Rating").padConcat(tablePadding)
-    val playerStats = Seq((MatchService.Top, p.topStats), (MatchService.Jungle, p.jungleStats), (MatchService.Mid, p.midStats), (MatchService.Bot, p.botStats), (MatchService.Support, p.supportStats)).map {
-      case (role, stats) =>
-        Seq(role.toString, stats.games.toString, stats.winRatePercentage, stats.formattedMeanRating,
-          stats.formattedConservativeRating).padConcat(tablePadding)
-    }.mkString("\n")
-    codeBlock(s"In-game name: ${p.gameUsername}\n\n$header\n$playerStats")
-  }
-
-  def parseWinningTeamA(parsed: Int): Option[Boolean] = parsed match {
-    case 1 => Some(true)
-    case 2 => Some(false)
-    case _ => None
+    if (p.totalGames > 0) {
+      val header = Seq("Role", "# Games", "Win rate", "M. Rating", "C. Rating").padConcat(tablePadding)
+      val playerStats = Seq(
+        Option.when(p.topStats.games > 0){ (MatchService.Top, p.topStats) },
+        Option.when(p.jungleStats.games > 0){ (MatchService.Jungle, p.jungleStats) },
+        Option.when(p.midStats.games > 0){ (MatchService.Mid, p.midStats) },
+        Option.when(p.botStats.games > 0){ (MatchService.Bot, p.botStats) },
+        Option.when(p.supportStats.games > 0){ (MatchService.Support, p.supportStats) }
+      ).flatten.map {
+        case (role, stats) =>
+          Seq(role.toString, stats.games.toString, stats.winRatePercentage, stats.formattedMeanRating,stats.formattedConservativeRating).padConcat(tablePadding)
+      }.mkString("\n")
+      codeBlock(s"In-game name: ${p.gameUsername}\n\n$header\n$playerStats")
+    } else {
+      codeBlock(s"In-game name: ${p.gameUsername}\n\nNo games played yet")
+    }
   }
 
   private def hasRole(user: GuildMember, guild: Guild, role: RoleId): Boolean = {

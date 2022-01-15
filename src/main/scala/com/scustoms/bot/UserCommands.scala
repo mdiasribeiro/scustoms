@@ -6,8 +6,7 @@ import ackcord.syntax.TextChannelSyntax
 import ackcord.{DiscordClient, OptFuture}
 import akka.NotUsed
 import Emojis.{negativeMark, positiveMark}
-import com.scustoms.database.keepers.PlayerKeeper
-import com.scustoms.database.StaticReferences
+import com.scustoms.database.{DatabaseManager, StaticReferences}
 import com.scustoms.database.keepers.PlayerStatisticsKeeper.PlayerStatistics
 import com.scustoms.services.MatchService.{MatchRole, ResolvedStoredMatch}
 import com.scustoms.services.PlayerService.PlayerWithStatistics
@@ -38,28 +37,6 @@ class UserCommands(config: Config,
   val shortTablePadding: Int = config.getInt("scustoms.shortTablePadding")
   val indexPadding: Int = config.getInt("scustoms.indexPadding")
 
-  val RegisteredString = "registered"
-  val registered: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
-    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
-    .named(userCommandSymbols, Seq(RegisteredString))
-    .parsing[Option[String]](MessageParser.optional)
-    .asyncOpt(implicit m => {
-      val playerIdOpt = m.parsed
-        .map(DiscordUtils.getUserIdFromMention)
-        .getOrElse(Some(m.user.id))
-      playerIdOpt match {
-        case Some(playerId) =>
-          OptFuture.fromFuture(playerService.exists(playerId)).flatMap {
-            case true =>
-              DiscordUtils.reactAndRespond(positiveMark, s"Player is already registered.")
-            case false =>
-              DiscordUtils.reactAndRespond(negativeMark, "Player not found.")
-          }
-        case None =>
-          DiscordUtils.reactAndRespond(negativeMark, "Failed to parse parameter as a player mention.")
-      }
-    })
-
   val InfoString = "info"
   val info: NamedComplexCommand[Option[String], NotUsed] = GuildCommand
     .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
@@ -68,18 +45,18 @@ class UserCommands(config: Config,
     .asyncOpt(implicit userCommandMessage => {
       val playerIdOpt = userCommandMessage.parsed
         .map(DiscordUtils.getUserIdFromMention)
-        .getOrElse(Some(userCommandMessage.user.id))
+        .getOrElse(Right(userCommandMessage.user.id))
       playerIdOpt match {
-        case Some(playerId) =>
+        case Right(playerId) =>
           OptFuture.fromFuture(playerService.findAndResolve(playerId)).flatMap {
-            case Some(player) =>
+            case Right(player) =>
               val message = DiscordUtils.playerToString(player, shortTablePadding)
-              DiscordUtils.reactAndRespond(positiveMark, message)
-            case None =>
-              DiscordUtils.reactAndRespond(negativeMark, "Player not found. Make sure you have registered first.")
+              DiscordUtils.respond(message)
+            case Left(_) =>
+              DiscordUtils.reactAndRespond(negativeMark, s"Player with id `$playerId` was not found. Make sure they have registered first.")
           }
-        case None =>
-          DiscordUtils.reactAndRespond(negativeMark, "Failed to parse parameter as a player mention.")
+        case Left(err) =>
+          DiscordUtils.reactAndRespond(negativeMark, err.message)
       }
     })
 
@@ -110,7 +87,9 @@ class UserCommands(config: Config,
       val boardTypeBest = userCommandMessage.parsed.exists(_.toLowerCase == "best")
       val minGames = 5
       OptFuture.fromFuture(playerService.getAllPlayers).flatMap {
-        players =>
+        case Left(err) =>
+          DiscordUtils.reactAndRespond(negativeMark, err.message)
+        case Right(players) =>
           val playerStrings = players
             .flatMap(p => roleFilterOpt match {
               case Some(role) =>
@@ -134,7 +113,7 @@ class UserCommands(config: Config,
             }
           val header = leaderboardHeader(s"${"M. Rating".pad(shortTablePadding)}${"C. Rating".pad(shortTablePadding)}")
           val message = playerStrings.mkString(s"```$header\n\n", "\n", "```")
-          DiscordUtils.reactAndRespond(positiveMark, message)
+          DiscordUtils.respond(message)
       }
     })
 
@@ -180,10 +159,10 @@ class UserCommands(config: Config,
           val react = CreateReaction(m.textChannel.id, m.message.id, positiveMark)
           val respond = m.textChannel.sendMessage(s"${m.user.mention} you have been successfully registered. Say `$$help` to learn about actions you can take.")
           client.requestsHelper.runMany(react, respond, changeRole).map(_ => ())
-        case Left(PlayerKeeper.PlayerAlreadyExists) =>
-          DiscordUtils.reactAndRespond(negativeMark, s"Player '${m.user.username}' already exists")
-        case Left(_) =>
-          DiscordUtils.reactAndRespond(negativeMark, s"An unknown error has occurred")
+        case Left(DatabaseManager.PlayerAlreadyExists) =>
+          DiscordUtils.reactAndRespond(negativeMark, s"Player '${m.user.username}' already exists in the database")
+        case Left(err) =>
+          DiscordUtils.reactAndRespond(negativeMark, s"${err.message}")
       }
     })
 
@@ -196,14 +175,14 @@ class UserCommands(config: Config,
     .asyncOpt(implicit command => {
       val result: Future[Either[QueueError, QueuedPlayer]] =
         playerService.find(command.user.id).map {
-          case Some(player) =>
+          case Right(player) =>
             command.parsed
               .map(QueueService.parseRole)
               .getOrElse(Some(QueueService.Fill))
               .toRight(ErrorParsingRole)
               .map(role => QueuedPlayer(role, player))
-          case None =>
-            Left(PlayerDoesNotExist)
+          case Left(_) =>
+            Left(QueueService.PlayerDoesNotExist)
         }
 
       OptFuture.fromFuture(result).map {
@@ -242,11 +221,8 @@ class UserCommands(config: Config,
   val ShowString = "show"
   def queuedPlayersToString(players: Seq[QueuedPlayer]): Seq[String] = {
     players.sortBy(_.role)(QueueService.RoleOrdering).map {
-      case QueuedPlayer(QueueService.Fill, player) =>
-        s"${player.gameUsername.pad(tablePadding)}${QueueService.Fill.toString.pad(shortTablePadding)}"
       case QueuedPlayer(role, player) =>
-        val ratingStr = role.toMatchRole.map(player.conservativeRatingToString).getOrElse("").pad(shortTablePadding)
-        s"${player.gameUsername.pad(tablePadding)}${role.toString.pad(shortTablePadding)}$ratingStr"
+        s"${player.gameUsername.pad(tablePadding)}${role.toString.pad(shortTablePadding)}"
     }
   }
   val show: NamedCommand[NotUsed] = GuildCommand
@@ -256,7 +232,7 @@ class UserCommands(config: Config,
       val ongoingMatch = matchService.ongoingMatch
       val prioPlayers = queuedPlayersToString(queueService.getPriorityQueue)
       val normalPlayers = queuedPlayersToString(queueService.getNormalQueue)
-      val header = s"${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}${"Rating".pad(shortTablePadding)}"
+      val header = s"${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}"
       val prioQueueBlock = prioPlayers.ifNonEmpty(
         s"""${s"Prio queue (${prioPlayers.length})".pad(tablePadding)}
         |$header
@@ -285,11 +261,6 @@ class UserCommands(config: Config,
     .withRequest(implicit m => {
       val symbolStr = userCommandSymbols.head
       val helpText = m.parsed match {
-        case Some(RegisteredString) =>
-          s"""```
-             |Check if a user is registered
-             |Usage: $symbolStr$RegisteredString <?mention>
-             |```""".stripMargin
         case Some(HistoryString) =>
           s"""```
              |Look into the N latest matches (default 5)
@@ -329,7 +300,6 @@ class UserCommands(config: Config,
              |(Possible types: top, jungle, mid, bot, sup, support, best)
              |```""".stripMargin
         case _ =>
-          val registered = s"$symbolStr$RegisteredString".pad(tablePadding)
           val history = s"$symbolStr$HistoryString".pad(tablePadding)
           val register = s"$symbolStr$RegisterString".pad(tablePadding)
           val info = s"$symbolStr$InfoString".pad(tablePadding)
@@ -338,7 +308,6 @@ class UserCommands(config: Config,
           val show = s"$symbolStr$ShowString".pad(tablePadding)
           val leaderboard = s"$symbolStr$LeaderboardString".pad(tablePadding)
           Seq(
-            s"""$registered Check if a user is registered""",
             s"""$history Look into the N latest matches""",
             s"""$register Register yourself in the database""",
             s"""$info Shows player information""",
@@ -351,5 +320,5 @@ class UserCommands(config: Config,
       m.textChannel.sendMessage(helpText)
     })
 
-  val commandList = Seq(registered, history, register, info, join, leave, show, leaderboard, help)
+  val commandList = Seq(history, register, info, join, leave, show, leaderboard, help)
 }
