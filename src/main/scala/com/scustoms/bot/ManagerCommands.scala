@@ -312,9 +312,10 @@ class ManagerCommands(config: Config,
           queueService.updatePriorities(playingPlayers, remainingPlayers)
           queueService.clearNormalQueue()
           val completeMatch = RatingUtils.calculate(ongoingMatch, team1Won)
-          val update = matchService.insertAndUpdate(completeMatch)
-          OptFuture.fromFuture(update)
-            .map(_ => DiscordUtils.reactAndRespond(positiveMark, "Game result has been saved and player ratings updated."))
+          val updateResult = matchService.insertAndUpdate(completeMatch)
+            .map(_ => "Game result has been saved and player ratings updated.")
+            .recover(err => s"An error has occurred: ${err.getMessage}")
+          OptFuture.fromFuture(updateResult).flatMap(DiscordUtils.respond(_))
       }
     })
 
@@ -424,6 +425,15 @@ class ManagerCommands(config: Config,
         case None =>
           DiscordUtils.reactAndRespond(negativeMark, "There is no ongoing match")
       }
+    })
+
+  val test: NamedComplexCommand[String, NotUsed] = GuildCommand
+    .andThen(DiscordUtils.allowedTextRoom(StaticReferences.botChannel))
+    .named(managerCommandSymbols, Seq("test"))
+    .andThen(DiscordUtils.needRole(requiredRole))
+    .parsing[String]
+    .asyncOpt(implicit m => {
+      DiscordUtils.respond(s"&${m.parsed}")
     })
 
   val helpString = "help"
@@ -552,5 +562,5 @@ class ManagerCommands(config: Config,
     })
 
   val commandList = Seq(clear, addPlayer, addPriorityPlayer, remove, start, rebalance, winner, correct, abort, enrol,
-    renamePlayer, help, addMatch, relocateRooms, relocateLobby, swapPlayers)
+    renamePlayer, help, addMatch, relocateRooms, relocateLobby, swapPlayers, test)
 }

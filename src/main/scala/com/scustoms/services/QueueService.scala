@@ -23,7 +23,7 @@ object QueueService {
   }
 
   object RoleOrdering extends Ordering[QueueRole] {
-    def compare(a: QueueRole, b: QueueRole): Int = a.toString compare a.toString
+    def compare(a: QueueRole, b: QueueRole): Int = a.toString compare b.toString
   }
 
   sealed trait QueueRole {

@@ -1,6 +1,6 @@
 package com.scustoms.bot
 
-import ackcord.commands.{CommandController, MessageParser, NamedCommand, NamedComplexCommand}
+import ackcord.commands.{CommandBuilder, CommandController, GuildCommandMessage, GuildMemberCommandMessage, GuildUserCommandMessage, MessageParser, NamedCommand, NamedComplexCommand, UserCommandMessage}
 import ackcord.requests.{AddGuildMemberRole, CreateReaction}
 import ackcord.syntax.TextChannelSyntax
 import ackcord.{DiscordClient, OptFuture}
@@ -14,6 +14,8 @@ import com.scustoms.services.QueueService._
 import com.scustoms.services.{MatchService, PlayerService, QueueService}
 import com.scustoms.trueskill.RatingUtils.ratingFormat
 import com.typesafe.config.Config
+import cats._
+import cats.implicits._
 
 import scala.concurrent.Future
 
@@ -232,15 +234,16 @@ class UserCommands(config: Config,
       val ongoingMatch = matchService.ongoingMatch
       val prioPlayers = queuedPlayersToString(queueService.getPriorityQueue)
       val normalPlayers = queuedPlayersToString(queueService.getNormalQueue)
+      val playerCount = prioPlayers.length + normalPlayers.length
       val header = s"${"Username".pad(tablePadding)}${"Role".pad(shortTablePadding)}"
       val prioQueueBlock = prioPlayers.ifNonEmpty(
-        s"""${s"Prio queue (${prioPlayers.length})".pad(tablePadding)}
+        s"""${s"Priority queue".pad(tablePadding)}${s"${prioPlayers.length}/$playerCount".pad(shortTablePadding)}
         |$header
         |${prioPlayers.mkString("\n")}
         |\n""".stripMargin
       )
       val queueBlock = normalPlayers.ifNonEmpty(
-        s"""${s"Queue (${normalPlayers.length})".pad(tablePadding)}
+        s"""${s"Normal queue".pad(tablePadding)}${s"${normalPlayers.length}/$playerCount".pad(shortTablePadding)}
         |$header
         |${normalPlayers.mkString("\n")}
         |\n""".stripMargin
